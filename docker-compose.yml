@@ -1,0 +1,89 @@
+version: "3.9"
+
+services:
+  sandbox:
+    build: ./sandbox
+    ports:
+      - "8080:8080"
+    networks:
+      - quantnet
+    security_opt:
+      - no-new-privileges:true
+
+  botfleet:
+    build: ./botfleet
+    environment:
+      - SANDBOX_ENDPOINT=http://sandbox:8080
+      - REDPANDA_BROKER=redpanda:9092
+    depends_on:
+      - sandbox
+      - redpanda
+    networks:
+      - quantnet
+
+  telemetry:
+    build: ./telemetry
+    environment:
+      - REDPANDA_BROKER=redpanda:9092
+      - TIMESCALE_URL=postgres://quant:titans@timescaledb:5432/metrics
+      - REDIS_URL=redis:6379
+    depends_on:
+      - redpanda
+      - timescaledb
+      - redis
+    networks:
+      - quantnet
+
+  leaderboard:
+    build: ./leaderboard
+    ports:
+      - "3000:3000"
+    environment:
+      - TELEMETRY_WS=ws://telemetry:8081/ws
+    depends_on:
+      - telemetry
+    networks:
+      - quantnet
+
+  redpanda:
+    image: redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    ports:
+      - "9092:9092"
+    networks:
+      - quantnet
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD: titans
+      POSTGRES_DB: metrics
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    networks:
+      - quantnet
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - quantnet
+
+networks:
+  quantnet:
+    driver: bridge
+
+volumes:
+  timescale_data:

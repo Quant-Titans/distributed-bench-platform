@@ -9,6 +9,11 @@ services:
       - quantnet
     security_opt:
       - no-new-privileges:true
+    volumes:
+      # sandbox manager needs host Docker socket to spawn contestant containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - LISTEN_ADDR=:8080
 
   botfleet:
     build: ./botfleet

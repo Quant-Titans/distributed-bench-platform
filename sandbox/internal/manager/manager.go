@@ -90,7 +90,7 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 	hostCfg := &container.HostConfig{
 		Resources: container.Resources{
 			Memory:     cfg.MemoryMB * 1024 * 1024,
-			CPUSetCPUs: cfg.CPUCores,
+			CpusetCpus: cfg.CPUCores,
 		},
 		SecurityOpt: []string{
 			"no-new-privileges:true",

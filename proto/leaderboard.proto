@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package quant_titans;
+
+option go_package = "github.com/Quant-Titans/distributed-bench-platform/gen/proto";
+
+import "common.proto";
+
+service LeaderboardService {
+  rpc UpsertScore(CompositeScore)             returns (UpsertScoreResponse);
+  rpc GetLeaderboard(GetLeaderboardRequest)   returns (GetLeaderboardResponse);
+  rpc StreamLeaderboard(StreamRequest)        returns (stream LeaderboardSnapshot);
+}
+
+message UpsertScoreResponse {
+  int32 rank = 1;
+}
+
+message GetLeaderboardRequest {
+  int32 top_n = 1;  // 0 = all
+}
+
+message GetLeaderboardResponse {
+  repeated LeaderboardEntry entries = 1;
+  int64 as_of_ns = 2;
+}
+
+message LeaderboardEntry {
+  int32          rank          = 1;
+  string         team_name     = 2;
+  CompositeScore score         = 3;
+  int64          last_updated_ns = 4;
+}
+
+// Full snapshot pushed to WebSocket clients on every change
+message LeaderboardSnapshot {
+  repeated LeaderboardEntry entries = 1;
+  int64 snapshot_ns = 2;
+}
+
+message StreamRequest {}

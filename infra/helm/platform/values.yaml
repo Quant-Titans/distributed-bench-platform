@@ -1,0 +1,63 @@
+image:
+  registry: ghcr.io/quant-titans
+  tag: latest
+  pullPolicy: IfNotPresent
+
+kafka:
+  broker: "quant-titans-redpanda:9092"
+  topics:
+    rawMetrics: "bench.raw_metrics"
+    replayLog:  "bench.replay_log"
+    scores:     "bench.scores"
+    ebpfLatency: "telemetry.kernel_latency"
+
+sandbox:
+  replicas: 3
+  resources:
+    requests: { cpu: "2", memory: "1Gi" }
+    limits:   { cpu: "4", memory: "2Gi" }
+  env:
+    KAFKA_BROKER: "quant-titans-redpanda:9092"
+    EBPF_TOPIC: "telemetry.kernel_latency"
+  nodeSelector:
+    role: sandbox
+  tolerations:
+    - key: role
+      operator: Equal
+      value: sandbox
+      effect: NoSchedule
+
+botfleet:
+  replicas: 5
+  resources:
+    requests: { cpu: "1", memory: "512Mi" }
+    limits:   { cpu: "2", memory: "1Gi" }
+  env:
+    KAFKA_BROKER: "quant-titans-redpanda:9092"
+
+telemetry:
+  replicas: 2
+  resources:
+    requests: { cpu: "500m", memory: "512Mi" }
+    limits:   { cpu: "2", memory: "2Gi" }
+  env:
+    KAFKA_BROKER: "quant-titans-redpanda:9092"
+
+leaderboard:
+  replicas: 2
+  service:
+    type: LoadBalancer
+    port: 80
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "256Mi" }
+
+redpanda:
+  enabled: true
+  statefulset:
+    replicas: 3
+  storage:
+    persistentVolume:
+      size: 20Gi
+  resources:
+    requests: { cpu: "500m", memory: "1Gi" }

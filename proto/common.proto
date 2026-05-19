@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package quant_titans;
+
+option go_package = "github.com/Quant-Titans/distributed-bench-platform/gen/proto";
+
+// Nanosecond-precision composite score — the single source of truth across all services.
+message CompositeScore {
+  string session_id    = 1;
+  string team_name     = 2;
+
+  // HDR histogram percentiles — kernel-level (eBPF TC hook), nanoseconds
+  double p50_ns        = 3;
+  double p90_ns        = 4;
+  double p99_ns        = 5;
+  double p999_ns       = 6;
+
+  // Throughput
+  double tps           = 7;    // sustained orders/sec over benchmark window
+  double peak_tps      = 8;
+
+  // Correctness
+  double fill_accuracy = 9;    // 0.0–1.0: correct fills / total fills
+  int64  price_time_violations = 10;  // must be 0 to pass
+
+  // Resilience (chaos fault injection window)
+  double recovery_time_ms    = 11;
+  double degradation_ratio   = 12;  // p99 under chaos / p99 baseline
+
+  // Composite (weighted formula)
+  double throughput_score    = 13;
+  double tail_latency_score  = 14;
+  double correctness_score   = 15;
+  double resilience_score    = 16;
+  double total_score         = 17;
+
+  int64  computed_at_ns      = 18;
+}
+
+// Raw metric emitted per order — both app-layer and kernel-layer RTT
+message RawMetric {
+  string session_id    = 1;
+  string sandbox_id    = 2;
+  string order_id      = 3;
+  BotArchetype archetype = 4;
+
+  int64  kernel_rtt_ns = 5;   // from eBPF TC hook
+  int64  app_rtt_ns    = 6;   // from bot fleet timing
+  bool   fill_correct  = 7;
+  double fill_price    = 8;
+  int64  fill_qty      = 9;
+  int64  timestamp_ns  = 10;
+}
+
+// Replay event — every bot action recorded for deterministic replay
+message ReplayEvent {
+  string session_id  = 1;
+  string fleet_id    = 2;
+  int64  seq         = 3;   // monotonically increasing, for exact replay
+  int64  emitted_ns  = 4;
+
+  oneof payload {
+    OrderAction order  = 5;
+    CancelAction cancel = 6;
+  }
+}
+
+message OrderAction {
+  string   order_id  = 1;
+  string   symbol    = 2;
+  Side     side      = 3;
+  OrderType type     = 4;
+  double   price     = 5;
+  int64    quantity  = 6;
+  BotArchetype archetype = 7;
+}
+
+message CancelAction {
+  string order_id = 1;
+}
+
+enum BotArchetype {
+  NOISE_TRADER         = 0;
+  MARKET_MAKER         = 1;
+  MOMENTUM             = 2;
+  INSTITUTIONAL_SLICER = 3;
+  LATENCY_ARB          = 4;
+}
+
+enum Side {
+  BUY  = 0;
+  SELL = 1;
+}
+
+enum OrderType {
+  LIMIT  = 0;
+  MARKET = 1;
+  CANCEL = 2;
+}

@@ -17,11 +17,12 @@ func New(mgr *manager.Manager) *Handler {
 }
 
 type runRequest struct {
-	Image    string   `json:"image"`
-	CPUCores string   `json:"cpu_cores"`
-	MemoryMB int64    `json:"memory_mb"`
-	TimeoutS int      `json:"timeout_s"`
-	Env      []string `json:"env"`
+	SessionID string   `json:"session_id"`
+	Image     string   `json:"image"`
+	CPUCores  string   `json:"cpu_cores"`
+	MemoryMB  int64    `json:"memory_mb"`
+	TimeoutS  int      `json:"timeout_s"`
+	Env       []string `json:"env"`
 }
 
 type errorResponse struct {
@@ -40,11 +41,12 @@ func (h *Handler) Run(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info, err := h.mgr.Run(r.Context(), manager.Config{
-		Image:    req.Image,
-		CPUCores: req.CPUCores,
-		MemoryMB: req.MemoryMB,
-		TimeoutS: req.TimeoutS,
-		Env:      req.Env,
+		SessionID: req.SessionID,
+		Image:     req.Image,
+		CPUCores:  req.CPUCores,
+		MemoryMB:  req.MemoryMB,
+		TimeoutS:  req.TimeoutS,
+		Env:       req.Env,
 	})
 	if err != nil {
 		log.Printf("run sandbox %s: %v", req.Image, err)

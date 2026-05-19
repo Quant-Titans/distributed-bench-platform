@@ -30,3 +30,13 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Node
+leaderboard/node_modules/
+leaderboard/dist/
+
+# Go binaries
+*/bin/
+sandbox/bin/
+botfleet/bin/
+telemetry/bin/

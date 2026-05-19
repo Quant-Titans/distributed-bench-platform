@@ -14,7 +14,11 @@ import (
 )
 
 func main() {
-	mgr, err := manager.New()
+	kafka := manager.KafkaConfig{
+		Broker:    envOr("KAFKA_BROKER", "redpanda:9092"),
+		EBPFTopic: envOr("EBPF_TOPIC", "telemetry.kernel_latency"),
+	}
+	mgr, err := manager.New(kafka)
 	if err != nil {
 		log.Fatalf("sandbox manager init: %v", err)
 	}

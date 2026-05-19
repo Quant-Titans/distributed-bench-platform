@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package quant_titans;
+
+option go_package = "github.com/Quant-Titans/distributed-bench-platform/gen/proto";
+
+import "common.proto";
+
+service TelemetryService {
+  rpc GetScore(GetScoreRequest)             returns (CompositeScore);
+  rpc StreamScores(StreamScoresRequest)     returns (stream CompositeScore);
+  rpc GetHDRHistogram(HDRRequest)           returns (HDRHistogram);
+  rpc GetCorrectnessReport(CorrectnessRequest) returns (CorrectnessReport);
+}
+
+message GetScoreRequest {
+  string session_id = 1;
+}
+
+message StreamScoresRequest {
+  string session_id    = 1;
+  int64  interval_ms   = 2;  // push interval, e.g. 500ms
+}
+
+message HDRRequest {
+  string session_id = 1;
+  bool   kernel_level = 2;  // true = eBPF measurements, false = app-layer
+}
+
+message HDRHistogram {
+  string session_id  = 1;
+  bool   kernel_level = 2;
+  double p50_ns      = 3;
+  double p75_ns      = 4;
+  double p90_ns      = 5;
+  double p95_ns      = 6;
+  double p99_ns      = 7;
+  double p999_ns     = 8;
+  double p9999_ns    = 9;
+  double mean_ns     = 10;
+  double stddev_ns   = 11;
+  int64  total_count = 12;
+  int64  min_ns      = 13;
+  int64  max_ns      = 14;
+}
+
+message CorrectnessRequest {
+  string session_id = 1;
+}
+
+message CorrectnessReport {
+  string session_id         = 1;
+  int64  total_fills        = 2;
+  int64  correct_fills      = 3;
+  double fill_accuracy      = 4;   // correct / total
+  int64  price_time_violations = 5;
+  int64  phantom_fills      = 6;   // fills with no matching order
+  int64  duplicate_fills    = 7;
+  repeated ViolationDetail violations = 8;
+}
+
+message ViolationDetail {
+  string order_id    = 1;
+  string description = 2;
+  int64  timestamp_ns = 3;
+}

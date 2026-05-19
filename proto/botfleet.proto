@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package quant_titans;
+
+option go_package = "github.com/Quant-Titans/distributed-bench-platform/gen/proto";
+
+service BotFleetService {
+  rpc SpawnFleet(SpawnFleetRequest)   returns (SpawnFleetResponse);
+  rpc StopFleet(StopFleetRequest)     returns (StopFleetResponse);
+  rpc GetFleetStatus(FleetStatusRequest) returns (FleetStatus);
+  rpc ReplayBenchmark(ReplayRequest)  returns (ReplayResponse);
+}
+
+message SpawnFleetRequest {
+  string session_id    = 1;
+  string endpoint_url  = 2;
+  string symbol        = 3;  // e.g. "AAPL"
+  int32  bot_count     = 4;
+  int32  target_tps    = 5;
+  int64  duration_secs = 6;
+
+  // Archetype mix — must sum to bot_count
+  ArchetypeMix mix     = 7;
+}
+
+message ArchetypeMix {
+  int32 market_makers         = 1;  // Avellaneda-Stoikov
+  int32 momentum_traders      = 2;
+  int32 noise_traders         = 3;
+  int32 institutional_slicers = 4;
+  int32 latency_arbs          = 5;
+}
+
+message SpawnFleetResponse {
+  string fleet_id = 1;
+}
+
+message StopFleetRequest {
+  string fleet_id = 1;
+}
+
+message StopFleetResponse {}
+
+message FleetStatusRequest {
+  string fleet_id = 1;
+}
+
+message FleetStatus {
+  string fleet_id      = 1;
+  int32  active_bots   = 2;
+  double current_tps   = 3;
+  int64  orders_sent   = 4;
+  int64  elapsed_ns    = 5;
+  State  state         = 6;
+
+  enum State {
+    RUNNING   = 0;
+    COMPLETED = 1;
+    STOPPED   = 2;
+    ERROR     = 3;
+  }
+}
+
+// Deterministic replay — feed exact recorded event sequence to any endpoint
+message ReplayRequest {
+  string session_id   = 1;
+  string endpoint_url = 2;  // replay against this target
+  int64  speed_factor = 3;  // 1 = realtime, 2 = 2x speed, 0 = max speed
+}
+
+message ReplayResponse {
+  string replay_id   = 1;
+  int64  event_count = 2;
+}

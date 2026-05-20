@@ -107,6 +107,7 @@ services:
       KAFKA_BROKER: "redpanda:29092"
       METRICS_TOPIC: "bench.raw_metrics"
       REPLAY_TOPIC: "bench.replay_log"
+      FIX_ENDPOINT: ""   # set to host:port if contestant exposes FIX 4.4
     depends_on:
       redpanda-init:
         condition: service_completed_successfully

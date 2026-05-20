@@ -12,14 +12,15 @@ import (
 )
 
 func main() {
-	broker      := envOr("KAFKA_BROKER", "redpanda:9092")
+	broker       := envOr("KAFKA_BROKER", "redpanda:9092")
 	metricsTopic := envOr("METRICS_TOPIC", "bench.raw_metrics")
-	ebpfTopic   := envOr("EBPF_TOPIC", "telemetry.kernel_latency")
-	scoreTopic  := envOr("SCORE_TOPIC", "bench.scores")
-	groupID     := envOr("CONSUMER_GROUP", "telemetry-engine")
+	ebpfTopic    := envOr("EBPF_TOPIC", "telemetry.kernel_latency")
+	eventsTopic  := envOr("EVENTS_TOPIC", "bench.events")
+	scoreTopic   := envOr("SCORE_TOPIC", "bench.scores")
+	groupID      := envOr("CONSUMER_GROUP", "telemetry-engine")
 
 	engine := scorer.NewEngine(broker, scoreTopic)
-	cons   := consumer.New(broker, metricsTopic, ebpfTopic, groupID, engine)
+	cons   := consumer.New(broker, metricsTopic, ebpfTopic, eventsTopic, groupID, engine)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

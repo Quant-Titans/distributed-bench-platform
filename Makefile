@@ -1,5 +1,6 @@
 .PHONY: up down smoke build test sandbox-deps sandbox-build sandbox-test botfleet-build \
-        leaderboard-build telemetry-build ebpf-build proto proto-clean gen-deps lint clean deploy
+        leaderboard-build telemetry-build ebpf-build proto proto-clean gen-deps lint clean \
+        deploy destroy status submission
 
 GOPATH_BIN := $(shell go env GOPATH)/bin
 PROTO_SRC   := $(wildcard proto/*.proto)
@@ -106,11 +107,47 @@ lint:
 # ── One-command deploy ────────────────────────────────────────────────────────
 deploy:
 	cd infra/terraform && terraform init && terraform apply -auto-approve
+	cd infra/terraform && eval "$$(terraform output -raw kubeconfig_command)"
+	cd infra/helm/platform && helm dependency update
 	helm upgrade --install quant-titans infra/helm/platform \
 		--namespace quant-titans --create-namespace \
 		--wait --timeout 10m
-	@echo "✓ Platform live"
+	@echo "✓ Platform live — leaderboard at $$(kubectl get svc -n quant-titans leaderboard -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo '(pending)')"
+
+destroy:
+	helm uninstall quant-titans -n quant-titans 2>/dev/null || true
+	cd infra/terraform && terraform destroy -auto-approve
+
+status:
+	@echo "── Pods ──────────────────────────────────────────────"
+	kubectl get pods -n quant-titans
+	@echo ""
+	@echo "── Services ──────────────────────────────────────────"
+	kubectl get svc -n quant-titans
+	@echo ""
+	@echo "── Leaderboard URL ───────────────────────────────────"
+	@kubectl get svc -n quant-titans leaderboard -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null && echo "" || echo "(no external IP yet)"
+
+# ── Submission packaging ──────────────────────────────────────────────────────
+SUBMISSION_DIR := dist/submission-quant-titans-$(shell date +%Y%m%d)
+
+submission:
+	@echo "Packaging IICPC submission…"
+	rm -rf dist/ && mkdir -p $(SUBMISSION_DIR)
+	# Source code (exclude build artefacts and secrets)
+	git archive HEAD --format=tar | tar -x -C $(SUBMISSION_DIR)
+	# Docs
+	cp -r docs $(SUBMISSION_DIR)/
+	# Architecture diagram (if exported)
+	[ -f docs/architecture.png ] && cp docs/architecture.png $(SUBMISSION_DIR)/ || true
+	# Verify make deploy target is present
+	@grep -q '^deploy:' $(SUBMISSION_DIR)/Makefile && echo "✓ make deploy present" || (echo "FAIL: make deploy missing" && exit 1)
+	# Tar it up
+	cd dist && tar -czf submission-quant-titans-$(shell date +%Y%m%d).tar.gz submission-quant-titans-$(shell date +%Y%m%d)/
+	@echo "✓ Submission package: dist/submission-quant-titans-$(shell date +%Y%m%d).tar.gz"
+	@du -sh dist/submission-quant-titans-$(shell date +%Y%m%d).tar.gz
 
 clean:
 	docker-compose down --volumes --remove-orphans
 	rm -f sandbox/bin/* botfleet/bin/* telemetry/bin/*
+	rm -rf dist/

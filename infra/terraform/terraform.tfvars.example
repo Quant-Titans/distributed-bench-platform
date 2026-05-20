@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and fill in real values before running make deploy.
+# NEVER commit terraform.tfvars — it's in .gitignore.
+
+aws_region    = "eu-north-1"
+cluster_name  = "quant-titans"
+k8s_namespace = "quant-titans"
+image_tag     = "latest"
+
+# GitHub PAT with read:packages scope — for pulling ghcr.io/quant-titans images
+ghcr_username = "emmanueladutwum123"
+ghcr_token    = "ghp_YOUR_TOKEN_HERE"
+
+# TimescaleDB password (also passed to the Helm chart via --set)
+db_password   = "change-me-strong-password"

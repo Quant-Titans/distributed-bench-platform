@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: telemetry
+  namespace: {{ .Release.Namespace }}
   labels:
     app: telemetry
 spec:
@@ -14,6 +15,9 @@ spec:
       labels:
         app: telemetry
     spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: telemetry
           image: "{{ .Values.image.registry }}/telemetry:{{ .Values.image.tag }}"
@@ -24,3 +28,13 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
           resources: {{ toYaml .Values.telemetry.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "exit 0"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "exit 0"]
+            initialDelaySeconds: 10
+            periodSeconds: 10

@@ -104,12 +104,38 @@ lint:
 	golangci-lint run ./...
 
 # ── One-command deploy ────────────────────────────────────────────────────────
+# Prerequisites: terraform ≥1.6, aws CLI (authenticated), helm ≥3.14, kubectl
 deploy:
-	cd infra/terraform && terraform init && terraform apply -auto-approve
+	@echo "==> [1/4] Provisioning VPC + EKS cluster (terraform apply)..."
+	cd infra/terraform && terraform init -input=false && terraform apply -auto-approve -input=false
+	@echo "==> [2/4] Configuring kubectl for the new cluster..."
+	aws eks update-kubeconfig --name quant-titans --region eu-north-1
+	@echo "==> [3/4] Updating Helm chart dependencies (Redpanda chart)..."
+	helm repo add redpanda https://charts.redpanda.com 2>/dev/null || true
+	helm dependency update infra/helm/platform
+	@echo "==> [4/4] Deploying platform Helm chart..."
 	helm upgrade --install quant-titans infra/helm/platform \
 		--namespace quant-titans --create-namespace \
-		--wait --timeout 10m
-	@echo "✓ Platform live"
+		--wait --timeout 15m
+	@echo ""
+	@echo "✓ Platform deployed. Run 'make status' to verify."
+
+destroy:
+	cd infra/terraform && terraform destroy -auto-approve -input=false
+	@echo "✓ All AWS resources destroyed."
+
+status:
+	@echo "── Pods ──────────────────────────────────────────────────────────"
+	@kubectl get pods -n quant-titans
+	@echo ""
+	@echo "── Services ──────────────────────────────────────────────────────"
+	@kubectl get svc -n quant-titans
+	@echo ""
+	@echo "── Leaderboard URL ───────────────────────────────────────────────"
+	@kubectl get svc leaderboard -n quant-titans \
+		-o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null \
+		|| echo "(LoadBalancer still provisioning — retry in 2 min)"
+	@echo ""
 
 clean:
 	docker-compose down --volumes --remove-orphans

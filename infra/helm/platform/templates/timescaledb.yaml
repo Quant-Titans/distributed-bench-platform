@@ -1,0 +1,138 @@
+{{- /* TimescaleDB — self-hosted StatefulSet, consistent with docker-compose */ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: timescaledb-init
+  namespace: {{ .Release.Namespace }}
+data:
+  init.sql: |
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+    CREATE TABLE IF NOT EXISTS raw_metrics (
+        time            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        session_id      TEXT        NOT NULL,
+        sandbox_id      TEXT        NOT NULL,
+        order_id        TEXT        NOT NULL,
+        archetype       TEXT        NOT NULL,
+        app_rtt_ns      BIGINT,
+        kernel_rtt_ns   BIGINT,
+        fill_correct    BOOLEAN,
+        fill_price      DOUBLE PRECISION,
+        fill_qty        BIGINT,
+        replay_seq      BIGINT
+    );
+    SELECT create_hypertable('raw_metrics', 'time', if_not_exists => TRUE);
+    CREATE INDEX IF NOT EXISTS idx_raw_metrics_session ON raw_metrics (session_id, time DESC);
+
+    CREATE TABLE IF NOT EXISTS composite_scores (
+        time                    TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+        session_id              TEXT             NOT NULL,
+        team_name               TEXT,
+        p50_ns                  DOUBLE PRECISION,
+        p90_ns                  DOUBLE PRECISION,
+        p99_ns                  DOUBLE PRECISION,
+        p999_ns                 DOUBLE PRECISION,
+        tps                     DOUBLE PRECISION,
+        peak_tps                DOUBLE PRECISION,
+        fill_accuracy           DOUBLE PRECISION,
+        price_time_violations   BIGINT,
+        recovery_time_ms        DOUBLE PRECISION,
+        degradation_ratio       DOUBLE PRECISION,
+        throughput_score        DOUBLE PRECISION,
+        tail_latency_score      DOUBLE PRECISION,
+        correctness_score       DOUBLE PRECISION,
+        resilience_score        DOUBLE PRECISION,
+        total_score             DOUBLE PRECISION
+    );
+    SELECT create_hypertable('composite_scores', 'time', if_not_exists => TRUE);
+    CREATE INDEX IF NOT EXISTS idx_scores_session ON composite_scores (session_id, time DESC);
+
+    CREATE TABLE IF NOT EXISTS kernel_latency (
+        time        TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+        session_id  TEXT             NOT NULL,
+        sandbox_id  TEXT             NOT NULL,
+        src_ip      TEXT,
+        dst_ip      TEXT,
+        src_port    INTEGER,
+        dst_port    INTEGER,
+        rtt_ns      BIGINT,
+        ingress_ns  BIGINT,
+        egress_ns   BIGINT
+    );
+    SELECT create_hypertable('kernel_latency', 'time', if_not_exists => TRUE);
+    CREATE INDEX IF NOT EXISTS idx_kernel_latency_session ON kernel_latency (session_id, time DESC);
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: timescaledb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: timescaledb
+spec:
+  serviceName: timescaledb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: timescaledb
+  template:
+    metadata:
+      labels:
+        app: timescaledb
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: timescaledb
+          image: {{ .Values.timescaledb.image }}
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.timescaledb.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.timescaledb.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.timescaledb.database | quote }}
+          resources: {{ toYaml .Values.timescaledb.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.timescaledb.user | quote }}, "-d", {{ .Values.timescaledb.database | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.timescaledb.user | quote }}, "-d", {{ .Values.timescaledb.database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: init-sql
+          configMap:
+            name: timescaledb-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.timescaledb.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: timescaledb
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: timescaledb
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None   # headless — StatefulSet DNS: timescaledb.quant-titans.svc.cluster.local

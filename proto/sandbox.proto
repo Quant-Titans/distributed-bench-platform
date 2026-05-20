@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package quant_titans;
+
+option go_package = "github.com/Quant-Titans/distributed-bench-platform/gen/proto";
+
+import "common.proto";
+
+service SandboxService {
+  rpc RunSandbox(RunSandboxRequest)     returns (RunSandboxResponse);
+  rpc GetStatus(GetStatusRequest)       returns (SandboxStatus);
+  rpc DeleteSandbox(DeleteSandboxRequest) returns (DeleteSandboxResponse);
+  rpc SpawnBotFleet(SpawnBotFleetRequest) returns (SpawnBotFleetResponse);
+}
+
+message RunSandboxRequest {
+  string session_id  = 1;
+  string image       = 2;  // Docker image name or digest
+  repeated string env = 3;
+  int32  cpu_cores   = 4;  // cpuset pinning, e.g. "0-3"
+  int64  memory_mb   = 5;
+}
+
+message RunSandboxResponse {
+  string sandbox_id    = 1;
+  string endpoint_url  = 2;  // host:port bots connect to
+}
+
+message GetStatusRequest {
+  string sandbox_id = 1;
+}
+
+message SandboxStatus {
+  string sandbox_id  = 1;
+  State  state       = 2;
+  int64  created_at_ns = 3;
+  int64  uptime_ns   = 4;
+  string ebpf_iface  = 5;  // network interface eBPF is attached to
+
+  enum State {
+    RUNNING  = 0;
+    STOPPED  = 1;
+    ERROR    = 2;
+    TIMEOUT  = 3;
+  }
+}
+
+message DeleteSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message DeleteSandboxResponse {}
+
+// Triggers the bot fleet against this sandbox
+message SpawnBotFleetRequest {
+  string session_id    = 1;
+  string sandbox_id    = 2;
+  string endpoint_url  = 3;
+  int32  bot_count     = 4;
+  int32  target_tps    = 5;
+  int64  duration_secs = 6;
+  repeated BotArchetype archetypes = 7;
+  bool   enable_chaos  = 8;
+}
+
+message SpawnBotFleetResponse {
+  string fleet_id = 1;
+}

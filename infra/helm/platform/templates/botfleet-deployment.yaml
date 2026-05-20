@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: botfleet
+  labels:
+    app: botfleet
+spec:
+  replicas: {{ .Values.botfleet.replicas }}
+  selector:
+    matchLabels:
+      app: botfleet
+  template:
+    metadata:
+      labels:
+        app: botfleet
+    spec:
+      containers:
+        - name: botfleet
+          image: "{{ .Values.image.registry }}/botfleet:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 9090
+              name: grpc
+          env:
+            {{- range $k, $v := .Values.botfleet.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          resources: {{ toYaml .Values.botfleet.resources | nindent 12 }}
+          livenessProbe:
+            grpc: { port: 9090 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: botfleet
+spec:
+  selector:
+    app: botfleet
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: grpc

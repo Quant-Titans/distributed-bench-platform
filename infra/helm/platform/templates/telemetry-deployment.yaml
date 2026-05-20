@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry
+  labels:
+    app: telemetry
+spec:
+  replicas: {{ .Values.telemetry.replicas }}
+  selector:
+    matchLabels:
+      app: telemetry
+  template:
+    metadata:
+      labels:
+        app: telemetry
+    spec:
+      containers:
+        - name: telemetry
+          image: "{{ .Values.image.registry }}/telemetry:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- range $k, $v := .Values.telemetry.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          resources: {{ toYaml .Values.telemetry.resources | nindent 12 }}

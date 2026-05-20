@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox
+  labels:
+    app: sandbox
+    component: quant-titans
+spec:
+  replicas: {{ .Values.sandbox.replicas }}
+  selector:
+    matchLabels:
+      app: sandbox
+  template:
+    metadata:
+      labels:
+        app: sandbox
+    spec:
+      nodeSelector: {{ toYaml .Values.sandbox.nodeSelector | nindent 8 }}
+      tolerations: {{ toYaml .Values.sandbox.tolerations | nindent 8 }}
+      # eBPF TC hooks require NET_ADMIN + SYS_ADMIN
+      securityContext:
+        runAsNonRoot: false
+      containers:
+        - name: sandbox
+          image: "{{ .Values.image.registry }}/sandbox:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            {{- range $k, $v := .Values.sandbox.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          resources: {{ toYaml .Values.sandbox.resources | nindent 12 }}
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN    # required for eBPF TC attachment
+                - SYS_ADMIN    # required for rlimit + BPF syscall
+                - NET_BIND_SERVICE
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            - name: seccomp-profile
+              mountPath: /etc/sandbox
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        - name: seccomp-profile
+          configMap:
+            name: sandbox-seccomp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox
+spec:
+  selector:
+    app: sandbox
+  ports:
+    - port: 8080
+      targetPort: 8080

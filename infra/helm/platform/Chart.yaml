@@ -1,0 +1,12 @@
+apiVersion: v2
+name: quant-titans-platform
+description: Distributed Benchmarking Platform — IICPC Summer Hackathon 2026
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: redpanda
+    version: "5.9.x"
+    repository: "https://charts.redpanda.com"
+    condition: redpanda.enabled

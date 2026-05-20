@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	sandboxNetwork  = "sandbox_net"
 	seccompPath     = "/etc/sandbox/seccomp.json"
 	defaultMemoryMB = 512
 	defaultCPUCores = "0"
@@ -55,11 +54,12 @@ type Info struct {
 }
 
 type Manager struct {
-	cli         *client.Client
-	seccompJSON string
-	kafka       KafkaConfig
-	mu          sync.RWMutex
-	sandboxes   map[string]*Info
+	cli            *client.Client
+	seccompJSON    string
+	kafka          KafkaConfig
+	sandboxNetwork string // e.g. "sandbox_net" (prod) or "quantnet" (CI)
+	mu             sync.RWMutex
+	sandboxes      map[string]*Info
 	// ipRegistry maps containerIP → sandbox shortID for eBPF event annotation.
 	ipRegistry  map[string]string
 }
@@ -78,12 +78,18 @@ func New(kafka KafkaConfig) (*Manager, error) {
 		return nil, fmt.Errorf("read seccomp profile at %s: %w", seccompPath, err)
 	}
 
+	sandboxNet := os.Getenv("SANDBOX_NETWORK")
+	if sandboxNet == "" {
+		sandboxNet = "sandbox_net"
+	}
+
 	m := &Manager{
-		cli:         cli,
-		seccompJSON: string(raw),
-		kafka:       kafka,
-		sandboxes:   make(map[string]*Info),
-		ipRegistry:  make(map[string]string),
+		cli:            cli,
+		seccompJSON:    string(raw),
+		kafka:          kafka,
+		sandboxNetwork: sandboxNet,
+		sandboxes:      make(map[string]*Info),
+		ipRegistry:     make(map[string]string),
 	}
 
 	if err := m.ensureNetwork(context.Background()); err != nil {
@@ -122,7 +128,7 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		},
 		CapDrop:     strslice.StrSlice{"ALL"},
 		CapAdd:      strslice.StrSlice{"NET_BIND_SERVICE"},
-		NetworkMode: container.NetworkMode(sandboxNetwork),
+		NetworkMode: container.NetworkMode(m.sandboxNetwork),
 	}
 
 	containerCfg := &container.Config{
@@ -137,7 +143,7 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			sandboxNetwork: {},
+			m.sandboxNetwork: {},
 		},
 	}
 
@@ -157,7 +163,7 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 	}
 
 	containerIP := ""
-	if net, ok := inspect.NetworkSettings.Networks[sandboxNetwork]; ok {
+	if net, ok := inspect.NetworkSettings.Networks[m.sandboxNetwork]; ok {
 		containerIP = net.IPAddress
 	}
 
@@ -206,11 +212,11 @@ func (m *Manager) resolveBridgeIface(ctx context.Context) (string, error) {
 		return "", err
 	}
 	for _, n := range nets {
-		if n.Name == sandboxNetwork {
+		if n.Name == m.sandboxNetwork {
 			return fmt.Sprintf("br-%s", n.ID[:12]), nil
 		}
 	}
-	return "", fmt.Errorf("network %s not found", sandboxNetwork)
+	return "", fmt.Errorf("network %s not found", m.sandboxNetwork)
 }
 
 func (m *Manager) runEBPFProber(ctx context.Context, iface, sessionID, sandboxID string) {
@@ -273,11 +279,15 @@ func (m *Manager) ensureNetwork(ctx context.Context) error {
 		return err
 	}
 	for _, n := range nets {
-		if n.Name == sandboxNetwork {
-			return nil
+		if n.Name == m.sandboxNetwork {
+			return nil // already exists (either sandbox_net or a compose network)
 		}
 	}
-	_, err = m.cli.NetworkCreate(ctx, sandboxNetwork, types.NetworkCreate{
+	// Only create if it's our own managed network; never try to create bridge/host/none.
+	if m.sandboxNetwork == "bridge" || m.sandboxNetwork == "host" || m.sandboxNetwork == "none" {
+		return nil
+	}
+	_, err = m.cli.NetworkCreate(ctx, m.sandboxNetwork, types.NetworkCreate{
 		Driver: "bridge",
 		Options: map[string]string{
 			// prevent sandbox containers from reaching each other

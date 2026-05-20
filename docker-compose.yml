@@ -88,6 +88,7 @@ services:
       KAFKA_BROKER: "redpanda:29092"
       EBPF_TOPIC: "telemetry.kernel_latency"
       BOTFLEET_HTTP_ADDR: "http://botfleet:9091"
+      SANDBOX_NETWORK: "quantnet"
     depends_on:
       redpanda-init:
         condition: service_completed_successfully

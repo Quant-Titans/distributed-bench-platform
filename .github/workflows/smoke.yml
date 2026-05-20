@@ -20,13 +20,6 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           df -h
 
-      - name: Prepare Docker network namespace directory
-        run: |
-          # GitHub's ubuntu-latest runner doesn't pre-create this dir.
-          # Docker needs it to pin network namespaces for custom-bridge containers.
-          sudo mkdir -p /var/run/docker/netns
-          sudo chmod 755 /var/run/docker/netns
-
       - name: Start full stack
         run: docker compose --profile smoke up --build -d
 

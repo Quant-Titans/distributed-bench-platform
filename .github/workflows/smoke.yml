@@ -47,6 +47,14 @@ jobs:
             sleep 3
           done
 
+      - name: Wait for sandbox
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8080/healthz && break
+            echo "waiting for sandbox ($i/20)..."
+            sleep 3
+          done
+
       - name: Wait for leaderboard
         run: |
           for i in $(seq 1 20); do
@@ -55,7 +63,7 @@ jobs:
             sleep 3
           done
 
-      - name: Fire test order
+      - name: Fire test order (direct to dummy engine)
         run: |
           RESPONSE=$(curl -sf -X POST http://localhost:9000/v1/order \
             -H 'Content-Type: application/json' \
@@ -66,6 +74,55 @@ jobs:
       - name: Check engine stats
         run: |
           curl -sf http://localhost:9000/stats | python3 -m json.tool
+
+      - name: Build dummy-engine binary for upload test
+        run: |
+          cd dummy-engine
+          go build -o /tmp/ci-engine .
+          echo "Binary size: $(du -sh /tmp/ci-engine | cut -f1)"
+
+      - name: Test POST /v1/upload (full submission flow)
+        run: |
+          # Upload the compiled binary — sandbox builds a Docker image and starts it
+          RESPONSE=$(curl -sf --max-time 120 -X POST http://localhost:8080/v1/upload \
+            -F "team_name=CI-SmokeTester" \
+            -F "session_id=ci-upload-smoke" \
+            -F "binary=@/tmp/ci-engine" \
+            -F "timeout_s=30")
+          echo "Upload response: $RESPONSE"
+
+          # Assert required fields
+          python3 - <<'PYEOF'
+          import json, sys
+          raw = open('/dev/stdin').read() if not sys.stdin.isatty() else ''''"$RESPONSE"'''
+          PYEOF
+
+          echo "$RESPONSE" | python3 -c "
+          import json, sys
+          r = json.load(sys.stdin)
+          assert 'id'         in r, f'missing id: {r}'
+          assert 'session_id' in r, f'missing session_id: {r}'
+          assert 'endpoint'   in r, f'missing endpoint: {r}'
+          assert 'build_ms'   in r, f'missing build_ms: {r}'
+          assert r.get('status') == 'running', f'expected running, got {r.get(\"status\")}: {r}'
+          assert r.get('team_name') == 'CI-SmokeTester', f'team_name mismatch: {r}'
+          print(f'✓ sandbox started via upload')
+          print(f'  id={r[\"id\"]}  endpoint={r[\"endpoint\"]}  build_ms={r[\"build_ms\"]}')
+          "
+
+      - name: Verify upload-started sandbox status endpoint
+        run: |
+          # Extract the sandbox id from the upload response and poll status
+          SANDBOX_ID=$(curl -sf --max-time 120 -X POST http://localhost:8080/v1/upload \
+            -F "team_name=CI-Status-Check" \
+            -F "session_id=ci-status-check" \
+            -F "binary=@/tmp/ci-engine" \
+            -F "timeout_s=15" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          echo "Sandbox id: $SANDBOX_ID"
+          STATUS=$(curl -sf http://localhost:8080/v1/sandbox/${SANDBOX_ID}/status | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+          echo "Status: $STATUS"
+          [ "$STATUS" = "running" ] || (echo "FAIL: expected running, got $STATUS" && exit 1)
+          echo "✓ status endpoint confirms running"
 
       - name: Show container logs on failure
         if: failure()

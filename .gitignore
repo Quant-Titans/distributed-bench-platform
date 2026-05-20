@@ -40,3 +40,6 @@ leaderboard/dist/
 sandbox/bin/
 botfleet/bin/
 telemetry/bin/
+
+# Submission packages
+dist/

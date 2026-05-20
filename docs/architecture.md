@@ -1,7 +1,7 @@
 # Architecture — Quant Titans Distributed Benchmarking Platform
 
 **Team:** Quant Titans | **Competition:** IICPC Summer Hackathon 2026  
-**Last updated:** 2026-05-20 (Week 3 — fully operational)
+**Last updated:** 2026-05-20 (Week 4 — submission-ready)
 
 ---
 
@@ -24,6 +24,8 @@
 15. [Technology Decisions](#15-technology-decisions)
 16. [Architecture Decision Records](#16-architecture-decision-records)
 17. [Performance Characteristics](#17-performance-characteristics)
+18. [Contestant Upload Flow](#18-contestant-upload-flow)
+19. [Week 4 — Final Delivery Summary](#19-week-4--final-delivery-summary)
 
 ---
 
@@ -777,76 +779,124 @@ TTL of 2× evaluation timeout ensures stale sessions are cleaned up automaticall
 
 ## 12. Infrastructure as Code
 
-### Terraform Modules (`infra/terraform/`)
+### Terraform (`infra/terraform/main.tf`)
+
+A single `main.tf` file provisions the entire AWS footprint and immediately
+deploys the Helm chart in the same `terraform apply` run. The Kubernetes and
+Helm providers are configured from `data "aws_eks_cluster"` sources that
+depend on the EKS module, so no two-step `plan → kubeconfig → apply` is needed.
 
 ```
 infra/terraform/
-├── main.tf           — provider (AWS eu-north-1), remote state (S3)
-├── eks.tf            — EKS 1.30 cluster, two node groups:
-│                         sandbox-nodes  (c6i.xlarge, 4 vCPU / 8GB, spot)
-│                         botfleet-nodes (c6i.2xlarge, 8 vCPU / 16GB, on-demand)
-├── networking.tf     — VPC /16, 3 public + 3 private subnets, NAT gateway
-├── rds.tf            — RDS Aurora PostgreSQL 16 (TimescaleDB extension)
-├── elasticache.tf    — ElastiCache Redis 7
-└── variables.tf      — cluster_name, region, node_instance_type
+├── main.tf        — AWS provider, VPC module, EKS module (c6i.2xlarge sandbox
+│                    nodes + m6i.xlarge general nodes), kubernetes_namespace,
+│                    kubernetes_secret (GHCR pull secret),
+│                    helm_release "platform"
+│                    EKS addons: aws-ebs-csi-driver, coredns, kube-proxy, vpc-cni
+├── variables.tf   — aws_region, cluster_name, k8s_namespace, image_tag,
+│                    ghcr_username, ghcr_token (sensitive), db_password
+└── outputs.tf     — cluster_endpoint, cluster_name, kubeconfig_command,
+                     leaderboard_url, platform_status
 ```
 
-### Helm Charts (`infra/helm/`)
+TimescaleDB and Redis run as **Kubernetes StatefulSets** (not RDS/ElastiCache).
+This keeps the stack self-contained, reduces AWS cost, and matches the
+`docker-compose.yml` dev environment exactly.
+
+### Helm Chart (`infra/helm/platform/`)
+
+Umbrella chart with a Redpanda sub-chart dependency. A single `helm upgrade
+--install` deploys all four application services plus the two data stores.
 
 ```
-infra/helm/
-├── sandbox/          — Deployment, Service :8080, RBAC (needs Docker socket)
-├── botfleet/         — Deployment with HPA (scale on CPU), ConfigMap for archetype mix
-├── telemetry/        — Deployment, CronJob for score aggregation
-└── leaderboard/      — Deployment, Service :8082, Ingress (ALB)
+infra/helm/platform/
+├── Chart.yaml                        — umbrella + redpanda dependency
+├── values.yaml                       — all env vars, resources, HPA, topology
+└── templates/
+    ├── sandbox-deployment.yaml       — NET_ADMIN + SYS_ADMIN caps, docker.sock
+    ├── botfleet-deployment.yaml      — HPA (3 → 20 replicas, CPU 70%)
+    ├── telemetry-deployment.yaml
+    ├── leaderboard-deployment.yaml   — NLB LoadBalancer, port 8082
+    ├── timescaledb.yaml              — StatefulSet + headless SVC + 20 Gi PVC
+    ├── redis.yaml                    — StatefulSet + headless SVC + 5 Gi PVC
+    └── configmap-seccomp.yaml        — seccomp allowlist JSON as ConfigMap
 ```
 
 ### One-Command Deploy
 
 ```bash
-cd infra/terraform
-terraform init
-terraform apply -var="cluster_name=quant-titans-prod"
+# Prerequisites: terraform ≥1.6, aws CLI (authenticated), helm ≥3.14, kubectl
+cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
+$EDITOR infra/terraform/terraform.tfvars   # fill ghcr_token, db_password
 
-# After EKS is up:
-aws eks update-kubeconfig --name quant-titans-prod --region eu-north-1
-helm upgrade --install platform infra/helm/platform/ \
-  --set redpanda.brokers=<brokers> \
-  --set timescaledb.host=<rds-endpoint>
+make deploy          # runs all 4 steps: terraform → kubeconfig → helm deps → helm install
+make status          # show live pod/svc state + leaderboard URL
+make destroy         # full teardown
+make submission      # package source + docs into dated tarball for IICPC submission
 ```
 
 ---
 
 ## 13. CI/CD Pipeline
 
-### GitHub Actions (`.github/workflows/smoke.yml`)
+Three GitHub Actions workflows run on every push and PR:
 
-Every push to `main` or a feature branch triggers a full end-to-end smoke test on `ubuntu-latest`:
+### `smoke.yml` — End-to-end smoke test
+
+Triggers on every push to `main` or `feat/**`. Runs in ~2.5 minutes.
 
 ```
-Job: End-to-end smoke test (passes in ~2.5 minutes)
-
 Steps:
-  1. Free disk space (remove dotnet / android SDK — frees ~6GB)
+  1. Free disk space (removes dotnet/android SDK — frees ~6 GB)
   2. docker compose --profile smoke up --build -d
-     - Redpanda v23.3.21
-     - TimescaleDB 2.15.2-pg16
-     - Redis 7-alpine
-     - leaderboard (Go + React, multi-stage build)
-     - telemetry (Go)
-     - botfleet (Go)
-     - sandbox (Go, with eBPF stub)
-     - dummy-engine (Go, in-memory matching engine)
+       Redpanda v23.3.21, TimescaleDB 2.15.2-pg16, Redis 7-alpine,
+       sandbox (Go + eBPF stub), botfleet (Go), telemetry (Go),
+       leaderboard (Go + React multi-stage), dummy-engine (Go)
   3. Wait for Redpanda cluster health (rpk cluster health)
-  4. Wait for TimescaleDB (pg_isready)
+  4. Wait for TimescaleDB (pg_isready -U bench)
   5. Wait for dummy engine /healthz
   6. Wait for leaderboard /healthz
-  7. Fire test order → dummy engine POST /v1/order
+  7. POST /v1/order to dummy engine with a test limit order
   8. Assert response contains "status" field
-  9. Print /stats (per-symbol book depth)
+  9. Print /stats — live book depth confirmation
 ```
 
-The CI badge on `main` is live evidence that the full pipeline compiles and runs end-to-end on a clean Linux machine.
+### `build-push.yml` — Docker image CD pipeline
+
+Triggers on push to `main` (paths: `sandbox/**`, `botfleet/**`, `telemetry/**`,
+`leaderboard/**`). Builds 4 images in a parallel matrix and pushes to GHCR.
+
+```
+Matrix:  sandbox | botfleet | telemetry | leaderboard
+Registry: ghcr.io/quant-titans/{service}:{sha,latest}
+
+Steps per image:
+  1. docker/setup-buildx-action (layer caching via type=gha)
+  2. docker/login-action → ghcr.io (GITHUB_TOKEN)
+  3. docker/metadata-action → short-sha + latest tags
+  4. docker/build-push-action — push on push event, build-only on PRs
+     Provenance: true, SBOM: true
+  5. sigstore/cosign-installer + cosign sign (keyless OIDC)
+     → supply chain: no long-lived secrets, SLSA provenance attached
+```
+
+PRs get a build-only (no push) verify run so image errors are caught before merge.
+
+### `infra-validate.yml` — Terraform + Helm static validation
+
+Triggers on changes to `infra/**`.
+
+```
+terraform-validate job:
+  - terraform init -backend=false
+  - terraform validate
+  - terraform fmt -check -recursive
+
+helm-lint job:
+  - helm dependency update infra/helm/platform
+  - helm lint infra/helm/platform --strict
+  - helm template (dry run) — confirms rendering with CI values
+```
 
 ---
 
@@ -902,11 +952,11 @@ All scores are in \[0, 100\]. A perfect engine (sub-microsecond kernel p99, zero
 | ADR | Title | Status |
 |---|---|---|
 | [ADR-001](adr/001-seccomp-allowlist.md) | Use allowlist seccomp over Docker default blocklist | Accepted |
-| ADR-002 | eBPF TC hooks for kernel-layer RTT (not application-layer only) | Accepted |
-| ADR-003 | Dual Kafka topics: `raw_metrics` (telemetry) + `replay_log` (correctness) | Accepted |
-| ADR-004 | HdrHistogram over sorted-slice percentile for latency measurement | Accepted |
-| ADR-005 | `nhooyr.io/websocket` over `gorilla/websocket` for WebSocket server | Accepted |
-| ADR-006 | `StartOffset: LastOffset` in leaderboard Kafka consumer | Accepted |
+| [ADR-002](adr/002-ebpf-tc-hooks-for-latency.md) | eBPF TC hooks for kernel-layer RTT — why TC over XDP, LRU_HASH flow state, RINGBUF delivery | Accepted |
+| [ADR-003](adr/003-redpanda-over-apache-kafka.md) | Redpanda over Apache Kafka — single binary, Kafka-wire compat, no ZooKeeper | Accepted |
+| [ADR-004](adr/004-hdr-histograms-for-latency-percentiles.md) | HDR histograms over reservoir/t-digest — lossless p99.9, O(1) record/query, 80 KiB per session | Accepted |
+| ADR-005 | `nhooyr.io/websocket` over `gorilla/websocket` — context-aware write deadlines | Accepted |
+| ADR-006 | `StartOffset: LastOffset` in leaderboard consumer — live-only view, snapshots from TimescaleDB | Accepted |
 
 ### ADR-002 Summary — eBPF TC Hooks
 
@@ -966,4 +1016,133 @@ eBPF:  ~256KB ring buffer, ~65536-entry LRU hash map
 
 ---
 
-*Maintained by Emmanuel Adutwum. This document reflects the Week 3 implementation state (2026-05-20). All described components are deployed and tested via CI.*
+---
+
+## 18. Contestant Upload Flow
+
+The primary submission path is `POST /v1/upload` on the Sandbox Engine.
+
+### Flow
+
+```
+1.  curl -X POST http://sandbox:8080/v1/upload \
+        -F "team_name=AlphaTeam" \
+        -F "session_id=alpha-r1" \
+        -F "binary=@./engine_linux_amd64"
+
+2.  Handler parses multipart form (max 128 MiB).
+    Generates session_id if absent.  Defaults: cpu_cores=0,1  memory_mb=512  timeout_s=120.
+
+3.  makeBuildContext() — in-memory tar archive:
+      Dockerfile   (alpine:3.20 + ca-certificates + libstdc++)
+      engine       (uploaded binary, chmod 0755)
+
+4.  cli.ImageBuild(ctx, tarReader, ImageBuildOptions{Tags: ["contestant/<slug>:latest"]})
+    Streams JSON build output; scans for {"error":...} messages.
+    Returns build_ms for observability.
+
+5.  manager.Run() — ContainerCreate with seccomp + CapDrop ALL + CPU pinning
+    + read-only rootfs + sandbox_net isolation.
+
+6.  Response 201:
+    {
+      "id": "a3f2c1d8e9b4",
+      "session_id": "alpha-r1",
+      "team_name": "AlphaTeam",
+      "image": "contestant/alpha-r1:latest",
+      "endpoint": "http://172.20.0.5:8080",
+      "status": "running",
+      "image_tag": "contestant/alpha-r1:latest",
+      "build_ms": 3240
+    }
+
+7.  Sandbox Engine sends gRPC SpawnBotFleet(endpoint, session_id) → Bot Fleet.
+    1 000 bots begin sending orders to the contestant engine endpoint.
+
+8.  Telemetry scores flow; leaderboard updates in real time.
+```
+
+### Security boundaries during upload
+
+| Control | Detail |
+|---|---|
+| File size limit | 128 MiB hard cap (`r.ParseMultipartForm`) |
+| Image tag namespace | `contestant/<session-slug>:latest` — never overwrites platform images |
+| Sandbox isolation | Same seccomp + CapDrop ALL + CPU pinning as `POST /v1/sandbox/run` |
+| Build isolation | `docker build` runs as the daemon user; `ForceRemove: true` cleans intermediate layers |
+| Binary validation | Any Linux ELF binary accepted; seccomp allowlist prevents dangerous syscalls at runtime |
+
+### Alternative: `POST /v1/sandbox/run`
+
+For teams that already have a Docker image (e.g., pushed to GHCR or DockerHub),
+the direct run endpoint accepts an image name:
+
+```bash
+curl -X POST http://sandbox:8080/v1/sandbox/run \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"beta-r1","team_name":"BetaTeam","image":"ghcr.io/betateam/engine:latest","timeout_s":120}'
+```
+
+---
+
+## 19. Week 4 — Final Delivery Summary
+
+### Deliverables shipped during Week 4 (2026-05-20)
+
+| Deliverable | Location | Status |
+|---|---|---|
+| `POST /v1/upload` contestant submission API | `sandbox/internal/handler/upload.go` | ✅ |
+| `team_name` propagated through sandbox + leaderboard | `manager.Config`, `manager.Info` | ✅ |
+| GitHub Actions CD pipeline | `.github/workflows/build-push.yml` | ✅ |
+| cosign keyless image signing + SBOM + provenance | `build-push.yml` | ✅ |
+| `infra-validate.yml` — terraform fmt + helm lint | `.github/workflows/infra-validate.yml` | ✅ |
+| Competition-quality README with architecture diagram | `README.md` | ✅ |
+| `make deploy` (4-step one-command EKS deploy) | `Makefile` | ✅ |
+| `make destroy` / `make status` / `make submission` | `Makefile` | ✅ |
+| ADR-002: eBPF TC hooks rationale | `docs/adr/002-ebpf-tc-hooks-for-latency.md` | ✅ |
+| ADR-003: Redpanda over Kafka rationale | `docs/adr/003-redpanda-over-apache-kafka.md` | ✅ |
+| ADR-004: HDR histograms rationale | `docs/adr/004-hdr-histograms-for-latency-percentiles.md` | ✅ |
+| Architecture doc updated to Week 4 state | `docs/architecture.md` | ✅ |
+
+### End-to-end data flow (submission to leaderboard)
+
+```
+Contestant           Sandbox Engine        Bot Fleet         Telemetry           Leaderboard
+    │                      │                   │                 │                    │
+    │ POST /v1/upload       │                   │                 │                    │
+    │ (binary + team_name)  │                   │                 │                    │
+    ├──────────────────────►│                   │                 │                    │
+    │                       │ docker build       │                 │                    │
+    │                       │ (3-4 seconds)      │                 │                    │
+    │                       │ ContainerCreate    │                 │                    │
+    │                       │ (seccomp+cpuset)   │                 │                    │
+    │                       ├──gRPC SpawnFleet──►│                 │                    │
+    │ 201 + endpoint        │                   │ 1000 bots fire  │                    │
+    │◄──────────────────────│                   │ FIX/REST orders │                    │
+    │                       │ eBPF TC hook      │                 │                    │
+    │                       │ (kernel RTT)      │──bench.raw_metrics──────────────────►│
+    │                       │──telemetry.kernel_latency──────────►│                    │
+    │                       │                   │                 │ score computed      │
+    │                       │ tc netem chaos     │                 │ (4 dimensions)     │
+    │                       │ (after 30s base-   │                 │──bench.scores──────►│
+    │                       │  line window)      │                 │                    │ WebSocket
+    │                       │                   │──bench.events──►│                    │ push to
+    │                       │                   │ chaos_start/end │ resilience score   │ browsers
+    │                       │                   │                 │ updated            │
+```
+
+### Open PRs at submission (all CI green, all approved)
+
+| PR | Description |
+|---|---|
+| #11 | Architecture blueprint (this document) |
+| #12 | Async TimescaleDB writer |
+| #13 | 1000-bot scale + FIX 4.4 |
+| #14 | tc-netem chaos injector + resilience scoring |
+| #15 | One-command EKS deploy (Terraform + Helm) |
+| #16 | CD pipeline + competition README |
+| #17 | Contestant upload API + 3 ADRs |
+
+---
+
+*Maintained by Emmanuel Adutwum. This document reflects the Week 4 final state (2026-05-20). All described components are implemented, CI-tested, and ready for IICPC submission.*

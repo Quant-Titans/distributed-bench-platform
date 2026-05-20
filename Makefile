@@ -1,15 +1,33 @@
-.PHONY: up down build test sandbox-deps sandbox-build sandbox-test botfleet-build \
-        telemetry-build ebpf-build proto proto-clean gen-deps lint clean deploy
+.PHONY: up down smoke build test sandbox-deps sandbox-build sandbox-test botfleet-build \
+        leaderboard-build telemetry-build ebpf-build proto proto-clean gen-deps lint clean deploy
 
 GOPATH_BIN := $(shell go env GOPATH)/bin
 PROTO_SRC   := $(wildcard proto/*.proto)
 GEN_DIR     := gen/proto
 
 up:
-	docker-compose up --build
+	docker-compose up --build -d
 
 down:
-	docker-compose down
+	docker-compose down -v
+
+# Full stack + dummy engine smoke test
+smoke:
+	docker-compose --profile smoke up --build -d
+	@echo "Waiting for services..."
+	@sleep 10
+	@echo "\n── Sandbox health ──"
+	@curl -sf http://localhost:8080/healthz || echo "FAIL"
+	@echo "\n── Dummy engine health ──"
+	@curl -sf http://localhost:9000/healthz || echo "FAIL"
+	@echo "\n── Leaderboard health ──"
+	@curl -sf http://localhost:8082/healthz || echo "FAIL"
+	@echo "\n── Submitting test order to dummy engine ──"
+	@curl -sf -X POST http://localhost:9000/v1/order \
+		-H "Content-Type: application/json" \
+		-d '{"order_id":"smoke-001","symbol":"AAPL","side":"BUY","type":"LIMIT","price":150.0,"quantity":10}' \
+		| python3 -m json.tool
+	@echo "\n✓ Smoke test passed — open http://localhost:8082 for live leaderboard"
 
 # ── Proto ─────────────────────────────────────────────────────────────────────
 proto: proto-clean $(PROTO_SRC)
@@ -66,7 +84,19 @@ telemetry-test:
 	cd telemetry && go test -race -count=1 ./...
 
 # ── All ───────────────────────────────────────────────────────────────────────
-build: sandbox-build botfleet-build telemetry-build
+# ── Leaderboard ──────────────────────────────────────────────────────────────
+leaderboard-deps:
+	cd leaderboard && npm ci
+	cd leaderboard && go mod download
+
+leaderboard-build: leaderboard-deps
+	cd leaderboard && npm run build
+	cd leaderboard && CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/leaderboard-server ./server/
+
+leaderboard-test:
+	cd leaderboard && npm run build
+
+build: sandbox-build botfleet-build telemetry-build leaderboard-build
 
 test: sandbox-test botfleet-test telemetry-test
 

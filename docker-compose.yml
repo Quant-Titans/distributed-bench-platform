@@ -1,57 +1,11 @@
 version: "3.9"
 
 services:
-  sandbox:
-    build: ./sandbox
-    ports:
-      - "8080:8080"
-    networks:
-      - quantnet
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      # sandbox manager needs host Docker socket to spawn contestant containers
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - LISTEN_ADDR=:8080
 
-  botfleet:
-    build: ./botfleet
-    environment:
-      - SANDBOX_ENDPOINT=http://sandbox:8080
-      - REDPANDA_BROKER=redpanda:9092
-    depends_on:
-      - sandbox
-      - redpanda
-    networks:
-      - quantnet
-
-  telemetry:
-    build: ./telemetry
-    environment:
-      - REDPANDA_BROKER=redpanda:9092
-      - TIMESCALE_URL=postgres://quant:titans@timescaledb:5432/metrics
-      - REDIS_URL=redis:6379
-    depends_on:
-      - redpanda
-      - timescaledb
-      - redis
-    networks:
-      - quantnet
-
-  leaderboard:
-    build: ./leaderboard
-    ports:
-      - "3000:3000"
-    environment:
-      - TELEMETRY_WS=ws://telemetry:8081/ws
-    depends_on:
-      - telemetry
-    networks:
-      - quantnet
+  # ── Infrastructure ────────────────────────────────────────────────────────
 
   redpanda:
-    image: redpandadata/redpanda:latest
+    image: redpandadata/redpanda:v23.3.21
     command:
       - redpanda
       - start
@@ -63,11 +17,33 @@ services:
       - --advertise-kafka-addr=PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
     ports:
       - "9092:9092"
+      - "9644:9644"   # admin API
     networks:
       - quantnet
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info", "--brokers=localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redpanda-init:
+    image: redpandadata/redpanda:v23.3.21
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    networks:
+      - quantnet
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "rpk topic create bench.raw_metrics bench.replay_log bench.scores telemetry.kernel_latency \
+        --brokers redpanda:29092 \
+        --partitions 4 \
+        --replicas 1 || true"
+    restart: "no"
 
   timescaledb:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:2.15.2-pg16
     environment:
       POSTGRES_USER: quant
       POSTGRES_PASSWORD: titans
@@ -76,8 +52,14 @@ services:
       - "5432:5432"
     volumes:
       - timescale_data:/var/lib/postgresql/data
+      - ./infra/timescale/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - quantnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant -d metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -85,6 +67,110 @@ services:
       - "6379:6379"
     networks:
       - quantnet
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Platform Services ─────────────────────────────────────────────────────
+
+  sandbox:
+    build: ./sandbox
+    ports:
+      - "8080:8080"
+    networks:
+      - quantnet
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      LISTEN_ADDR: ":8080"
+      KAFKA_BROKER: "redpanda:29092"
+      EBPF_TOPIC: "telemetry.kernel_latency"
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  botfleet:
+    build: ./botfleet
+    ports:
+      - "9090:9090"
+    networks:
+      - quantnet
+    environment:
+      LISTEN_ADDR: ":9090"
+      KAFKA_BROKER: "redpanda:29092"
+      METRICS_TOPIC: "bench.raw_metrics"
+      REPLAY_TOPIC: "bench.replay_log"
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+
+  telemetry:
+    build: ./telemetry
+    networks:
+      - quantnet
+    environment:
+      KAFKA_BROKER: "redpanda:29092"
+      METRICS_TOPIC: "bench.raw_metrics"
+      EBPF_TOPIC: "telemetry.kernel_latency"
+      SCORE_TOPIC: "bench.scores"
+      CONSUMER_GROUP: "telemetry-engine"
+      TIMESCALE_URL: "postgres://quant:titans@timescaledb:5432/metrics"
+      REDIS_URL: "redis:6379"
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  leaderboard:
+    build: ./leaderboard
+    ports:
+      - "8082:8082"    # WebSocket + React UI on one port
+    networks:
+      - quantnet
+    environment:
+      LISTEN_ADDR: ":8082"
+      KAFKA_BROKER: "redpanda:29092"
+      SCORE_TOPIC: "bench.scores"
+      CONSUMER_GROUP: "leaderboard-ws"
+      STATIC_DIR: "/app/dist"
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Smoke-test dummy matching engine ─────────────────────────────────────
+  # NOT a contestant submission — used for local end-to-end testing only.
+  dummy-engine:
+    build: ./dummy-engine
+    ports:
+      - "9000:9000"
+    networks:
+      - quantnet
+    environment:
+      LISTEN_ADDR: ":9000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    profiles:
+      - smoke  # only starts with: docker-compose --profile smoke up
 
 networks:
   quantnet:

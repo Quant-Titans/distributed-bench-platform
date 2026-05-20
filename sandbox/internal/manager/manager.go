@@ -37,11 +37,13 @@ type Config struct {
 	TimeoutS  int      `json:"timeout_s"`
 	Env       []string `json:"env,omitempty"`
 	SessionID string   `json:"session_id"`
+	TeamName  string   `json:"team_name,omitempty"`
 }
 
 type Info struct {
 	ID          string    `json:"id"`
 	SessionID   string    `json:"session_id"`
+	TeamName    string    `json:"team_name,omitempty"`
 	Image       string    `json:"image"`
 	Endpoint    string    `json:"endpoint"`
 	ContainerIP string    `json:"container_ip"`
@@ -168,6 +170,7 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 	info := &Info{
 		ID:          shortID,
 		SessionID:   cfg.SessionID,
+		TeamName:    cfg.TeamName,
 		Image:       cfg.Image,
 		Endpoint:    fmt.Sprintf("http://%s:8080", containerIP),
 		ContainerIP: containerIP,

@@ -18,6 +18,7 @@ func New(mgr *manager.Manager) *Handler {
 
 type runRequest struct {
 	SessionID string   `json:"session_id"`
+	TeamName  string   `json:"team_name,omitempty"`
 	Image     string   `json:"image"`
 	CPUCores  string   `json:"cpu_cores"`
 	MemoryMB  int64    `json:"memory_mb"`
@@ -42,6 +43,7 @@ func (h *Handler) Run(w http.ResponseWriter, r *http.Request) {
 
 	info, err := h.mgr.Run(r.Context(), manager.Config{
 		SessionID: req.SessionID,
+		TeamName:  req.TeamName,
 		Image:     req.Image,
 		CPUCores:  req.CPUCores,
 		MemoryMB:  req.MemoryMB,

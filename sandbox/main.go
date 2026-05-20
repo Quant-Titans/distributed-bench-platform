@@ -27,6 +27,7 @@ func main() {
 	h := handler.New(mgr)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/upload", h.Upload)
 	mux.HandleFunc("POST /v1/sandbox/run", h.Run)
 	mux.HandleFunc("GET /v1/sandbox/{id}/status", h.Status)
 	mux.HandleFunc("DELETE /v1/sandbox/{id}", h.Stop)

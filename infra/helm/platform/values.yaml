@@ -117,3 +117,8 @@ redpanda:
         - "--smp=1"
         - "--memory=1G"
         - "--overprovisioned"
+  console:
+    ingress:
+      className: ""
+    service:
+      targetPort: 8080

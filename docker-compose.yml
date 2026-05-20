@@ -121,7 +121,7 @@ services:
       EBPF_TOPIC: "telemetry.kernel_latency"
       SCORE_TOPIC: "bench.scores"
       CONSUMER_GROUP: "telemetry-engine"
-      TIMESCALE_URL: "postgres://quant:titans@timescaledb:5432/metrics"
+      TIMESCALEDB_URL: "postgres://quant:titans@timescaledb:5432/metrics"
       REDIS_URL: "redis:6379"
     depends_on:
       redpanda-init:

@@ -61,3 +61,8 @@ redpanda:
       size: 20Gi
   resources:
     requests: { cpu: "500m", memory: "1Gi" }
+  console:
+    ingress:
+      className: ""
+    service:
+      targetPort: 8080

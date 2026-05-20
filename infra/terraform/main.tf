@@ -40,7 +40,7 @@ module "vpc" {
   public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
 
   enable_nat_gateway   = true
-  single_nat_gateway   = true  # cost-optimised for hackathon
+  single_nat_gateway   = true # cost-optimised for hackathon
   enable_dns_hostnames = true
 
   tags = local.common_tags
@@ -122,7 +122,7 @@ resource "aws_db_instance" "timescale" {
 
   db_subnet_group_name   = aws_db_subnet_group.timescale.name
   vpc_security_group_ids = [aws_security_group.timescale.id]
-  skip_final_snapshot    = true  # hackathon — skip final snapshot
+  skip_final_snapshot    = true # hackathon — skip final snapshot
   publicly_accessible    = false
 
   tags = local.common_tags

@@ -58,11 +58,12 @@ type Manager struct {
 	cli            *client.Client
 	seccompJSON    string
 	kafka          KafkaConfig
-	sandboxNetwork string // e.g. "sandbox_net" (prod) or "quantnet" (CI)
+	sandboxNetwork string // "sandbox_net" (prod) or "host" (CI)
+	insecure       bool   // SANDBOX_INSECURE=true disables seccomp/caps/readonly for CI
 	mu             sync.RWMutex
 	sandboxes      map[string]*Info
 	// ipRegistry maps containerIP → sandbox shortID for eBPF event annotation.
-	ipRegistry  map[string]string
+	ipRegistry map[string]string
 }
 
 func New(kafka KafkaConfig) (*Manager, error) {
@@ -83,12 +84,14 @@ func New(kafka KafkaConfig) (*Manager, error) {
 	if sandboxNet == "" {
 		sandboxNet = "sandbox_net"
 	}
+	insecure := os.Getenv("SANDBOX_INSECURE") == "true"
 
 	m := &Manager{
 		cli:            cli,
 		seccompJSON:    string(raw),
 		kafka:          kafka,
 		sandboxNetwork: sandboxNet,
+		insecure:       insecure,
 		sandboxes:      make(map[string]*Info),
 		ipRegistry:     make(map[string]string),
 	}
@@ -114,9 +117,15 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		cfg.TimeoutS = defaultTimeoutS
 	}
 
-	// host network mode: share the host's network namespace — no new namespace
-	// is created, so no bind-mount is needed. Required on GitHub Actions runners
-	// where the Docker daemon cannot bind-mount netns for API-created containers.
+	// SANDBOX_INSECURE=true: strip all OCI security constraints so contestant
+	// containers start on GitHub Actions runners (which reject custom seccomp +
+	// host-network + CapDrop combinations). In production this env var is unset
+	// and all isolation layers are active.
+	insecure := m.insecure
+
+	// host network mode shares the existing host netns — no new namespace and
+	// no bind-mount. Required on CI runners where the Docker daemon cannot
+	// bind-mount netns for API-created containers.
 	useHostNet := m.sandboxNetwork == "host"
 
 	networkMode := container.NetworkMode(m.sandboxNetwork)
@@ -126,22 +135,24 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 			Memory:     cfg.MemoryMB * 1024 * 1024,
 			CpusetCpus: cfg.CPUCores,
 		},
-		SecurityOpt: []string{
-			"no-new-privileges:true",
-			"seccomp=" + m.seccompJSON,
-		},
-		ReadonlyRootfs: true,
-		Tmpfs: map[string]string{
-			"/tmp": "rw,noexec,nosuid,size=64m",
-		},
-		CapDrop:     strslice.StrSlice{"ALL"},
-		CapAdd:      strslice.StrSlice{"NET_BIND_SERVICE"},
 		NetworkMode: networkMode,
 	}
 
+	if !insecure {
+		hostCfg.SecurityOpt = []string{
+			"no-new-privileges:true",
+			"seccomp=" + m.seccompJSON,
+		}
+		hostCfg.ReadonlyRootfs = true
+		hostCfg.Tmpfs = map[string]string{
+			"/tmp": "rw,noexec,nosuid,size=64m",
+		}
+		hostCfg.CapDrop = strslice.StrSlice{"ALL"}
+		hostCfg.CapAdd = strslice.StrSlice{"NET_BIND_SERVICE"}
+	}
+
 	// For host-network mode, find a free port on the host and pass it to the
-	// contestant binary via LISTEN_ADDR. Bridge/custom-network modes use the
-	// container's own IP on the fixed engine port instead.
+	// contestant binary via LISTEN_ADDR. Named networks use the container IP.
 	containerPort := 8080
 	if useHostNet {
 		if p, err := freePort(); err == nil {
@@ -161,7 +172,7 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		},
 	}
 
-	// host mode must not include endpoint config — it has no network endpoints.
+	// host mode must not specify endpoint config.
 	var netCfg *network.NetworkingConfig
 	if !useHostNet {
 		netCfg = &network.NetworkingConfig{

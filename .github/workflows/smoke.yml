@@ -1,0 +1,72 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    name: End-to-end smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h
+
+      - name: Start full stack
+        run: docker compose --profile smoke up --build -d
+
+      - name: Wait for Redpanda
+        run: |
+          for i in $(seq 1 30); do
+            docker compose exec -T redpanda rpk cluster health 2>/dev/null && break
+            echo "waiting for redpanda ($i/30)..."
+            sleep 5
+          done
+
+      - name: Wait for TimescaleDB
+        run: |
+          for i in $(seq 1 30); do
+            docker compose exec -T timescaledb pg_isready -U bench 2>/dev/null && break
+            echo "waiting for timescaledb ($i/30)..."
+            sleep 5
+          done
+
+      - name: Wait for dummy engine
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/healthz && break
+            echo "waiting for engine ($i/20)..."
+            sleep 3
+          done
+
+      - name: Wait for leaderboard
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8082/healthz && break
+            echo "waiting for leaderboard ($i/20)..."
+            sleep 3
+          done
+
+      - name: Fire test order
+        run: |
+          RESPONSE=$(curl -sf -X POST http://localhost:9000/v1/order \
+            -H 'Content-Type: application/json' \
+            -d '{"order_id":"ci-smoke-001","symbol":"AAPL","side":"BUY","type":"LIMIT","price":150.00,"quantity":10}')
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | grep -q '"status"' || (echo "FAIL: no status field" && exit 1)
+
+      - name: Check engine stats
+        run: |
+          curl -sf http://localhost:9000/stats | python3 -m json.tool
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs --tail=50

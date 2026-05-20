@@ -121,11 +121,13 @@ module "eks" {
       max_size       = 6
       desired_size   = 2
       labels         = { role = "sandbox" }
-      taints = [{
-        key    = "role"
-        value  = "sandbox"
-        effect = "NO_SCHEDULE"
-      }]
+      taints = [
+        {
+          key    = "role"
+          value  = "sandbox"
+          effect = "NO_SCHEDULE"
+        }
+      ]
     }
 
     # General purpose nodes for botfleet, telemetry, data stores, redpanda

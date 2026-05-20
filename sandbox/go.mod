@@ -1,6 +1,6 @@
 module github.com/Quant-Titans/distributed-bench-platform/sandbox
 
-go 1.25.0
+go 1.26.3
 
 require github.com/docker/docker v25.0.8+incompatible
 

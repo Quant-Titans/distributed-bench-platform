@@ -121,6 +121,11 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("upload: sandbox started id=%s endpoint=%s build_ms=%d", info.ID, info.Endpoint, buildMS)
 
+	// Kick off bot fleet asynchronously — sandbox response returns immediately.
+	if h.botFleetAddr != "" {
+		go h.spawnFleet(info.Endpoint, sessionID, int64(timeoutS))
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(UploadResponse{
@@ -211,4 +216,38 @@ func makeBuildContext(engineBytes []byte) (*bytes.Reader, error) {
 		return nil, err
 	}
 	return bytes.NewReader(buf.Bytes()), nil
+}
+
+// spawnFleet fires a POST to the botfleet HTTP API after a short delay to let
+// the contestant container start accepting connections.
+func (h *Handler) spawnFleet(endpointURL, sessionID string, durationSec int64) {
+	time.Sleep(3 * time.Second)
+
+	payload, _ := json.Marshal(map[string]any{
+		"session_id":   sessionID,
+		"endpoint_url": endpointURL,
+		"symbol":       "AAPL",
+		"bot_count":    200,
+		"target_tps":   1000,
+		"duration_secs": durationSec,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.botFleetAddr+"/v1/spawn",
+		bytes.NewReader(payload))
+	if err != nil {
+		log.Printf("spawnFleet build request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("spawnFleet: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	log.Printf("spawnFleet: session=%s status=%d", sessionID, resp.StatusCode)
 }

@@ -9,11 +9,12 @@ import (
 )
 
 type Handler struct {
-	mgr *manager.Manager
+	mgr          *manager.Manager
+	botFleetAddr string // e.g. "http://botfleet:9091" — empty disables auto-spawn
 }
 
-func New(mgr *manager.Manager) *Handler {
-	return &Handler{mgr: mgr}
+func New(mgr *manager.Manager, botFleetAddr string) *Handler {
+	return &Handler{mgr: mgr, botFleetAddr: botFleetAddr}
 }
 
 type runRequest struct {

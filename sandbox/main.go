@@ -24,7 +24,7 @@ func main() {
 	}
 	defer mgr.Close()
 
-	h := handler.New(mgr)
+	h := handler.New(mgr, envOr("BOTFLEET_HTTP_ADDR", ""))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/upload", h.Upload)

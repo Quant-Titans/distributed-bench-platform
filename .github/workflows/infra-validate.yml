@@ -5,7 +5,6 @@ on:
     branches: [main, "feat/**"]
     paths:
       - "infra/**"
-      - ".github/workflows/infra-validate.yml"
   pull_request:
     paths:
       - "infra/**"
@@ -43,7 +42,7 @@ jobs:
 
       - uses: azure/setup-helm@v4
         with:
-          version: "3.15.x"
+          version: "latest"
 
       - name: Add Redpanda repo
         run: helm repo add redpanda https://charts.redpanda.com

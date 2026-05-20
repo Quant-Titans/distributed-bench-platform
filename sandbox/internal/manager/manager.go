@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -113,6 +114,13 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		cfg.TimeoutS = defaultTimeoutS
 	}
 
+	// host network mode: share the host's network namespace — no new namespace
+	// is created, so no bind-mount is needed. Required on GitHub Actions runners
+	// where the Docker daemon cannot bind-mount netns for API-created containers.
+	useHostNet := m.sandboxNetwork == "host"
+
+	networkMode := container.NetworkMode(m.sandboxNetwork)
+
 	hostCfg := &container.HostConfig{
 		Resources: container.Resources{
 			Memory:     cfg.MemoryMB * 1024 * 1024,
@@ -128,23 +136,39 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		},
 		CapDrop:     strslice.StrSlice{"ALL"},
 		CapAdd:      strslice.StrSlice{"NET_BIND_SERVICE"},
-		NetworkMode: container.NetworkMode(m.sandboxNetwork),
+		NetworkMode: networkMode,
 	}
+
+	// For host-network mode, find a free port on the host and pass it to the
+	// contestant binary via LISTEN_ADDR. Bridge/custom-network modes use the
+	// container's own IP on the fixed engine port instead.
+	containerPort := 8080
+	if useHostNet {
+		if p, err := freePort(); err == nil {
+			containerPort = p
+		}
+	}
+
+	env := append(cfg.Env, fmt.Sprintf("LISTEN_ADDR=:%d", containerPort))
 
 	containerCfg := &container.Config{
 		Image: cfg.Image,
-		Env:   cfg.Env,
+		Env:   env,
 		Labels: map[string]string{
-			"quant-titans.role":      "sandbox",
-			"quant-titans.managed":   "true",
-			"quant-titans.session":   cfg.SessionID,
+			"quant-titans.role":    "sandbox",
+			"quant-titans.managed": "true",
+			"quant-titans.session": cfg.SessionID,
 		},
 	}
 
-	netCfg := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			m.sandboxNetwork: {},
-		},
+	// host mode must not include endpoint config — it has no network endpoints.
+	var netCfg *network.NetworkingConfig
+	if !useHostNet {
+		netCfg = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				m.sandboxNetwork: {},
+			},
+		}
 	}
 
 	resp, err := m.cli.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, "")
@@ -162,9 +186,11 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		return nil, fmt.Errorf("container inspect: %w", err)
 	}
 
-	containerIP := ""
-	if net, ok := inspect.NetworkSettings.Networks[m.sandboxNetwork]; ok {
-		containerIP = net.IPAddress
+	containerIP := "127.0.0.1" // default for host-network mode
+	if !useHostNet {
+		if n, ok := inspect.NetworkSettings.Networks[m.sandboxNetwork]; ok {
+			containerIP = n.IPAddress
+		}
 	}
 
 	bridgeIface, _ := m.resolveBridgeIface(ctx)
@@ -178,7 +204,7 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		SessionID:   cfg.SessionID,
 		TeamName:    cfg.TeamName,
 		Image:       cfg.Image,
-		Endpoint:    fmt.Sprintf("http://%s:8080", containerIP),
+		Endpoint:    fmt.Sprintf("http://%s:%d", containerIP, containerPort),
 		ContainerIP: containerIP,
 		Status:      "running",
 		StartedAt:   time.Now(),
@@ -318,4 +344,15 @@ func (m *Manager) enforceTimeout(ctx context.Context, containerID, shortID strin
 	bgCtx := context.Background()
 	_ = m.cli.ContainerStop(bgCtx, containerID, container.StopOptions{Timeout: &timeout})
 	_ = m.cli.ContainerRemove(bgCtx, containerID, container.RemoveOptions{Force: true})
+}
+
+// freePort asks the OS for an available TCP port by binding to :0.
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port, nil
 }

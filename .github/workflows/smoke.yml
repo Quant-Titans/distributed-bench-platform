@@ -86,8 +86,9 @@ jobs:
       - name: Build dummy-engine binary for upload test
         run: |
           cd dummy-engine
-          go build -o /tmp/ci-engine .
+          CGO_ENABLED=0 GOOS=linux go build -o /tmp/ci-engine .
           echo "Binary size: $(du -sh /tmp/ci-engine | cut -f1)"
+          file /tmp/ci-engine
 
       - name: Test POST /v1/upload (full submission flow)
         run: |

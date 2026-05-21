@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: botfleet
+  namespace: {{ .Release.Namespace }}
   labels:
     app: botfleet
 spec:
@@ -14,6 +15,9 @@ spec:
       labels:
         app: botfleet
     spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: botfleet
           image: "{{ .Values.image.registry }}/botfleet:{{ .Values.image.tag }}"
@@ -26,16 +30,23 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            - name: LISTEN_ADDR
+              value: ":9090"
           resources: {{ toYaml .Values.botfleet.resources | nindent 12 }}
           livenessProbe:
             grpc: { port: 9090 }
             initialDelaySeconds: 10
             periodSeconds: 15
+          readinessProbe:
+            grpc: { port: 9090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: botfleet
+  namespace: {{ .Release.Namespace }}
 spec:
   selector:
     app: botfleet
@@ -43,3 +54,25 @@ spec:
     - port: 9090
       targetPort: 9090
       name: grpc
+---
+{{- if .Values.botfleet.hpa }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: botfleet
+  namespace: {{ .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: botfleet
+  minReplicas: {{ .Values.botfleet.hpa.minReplicas }}
+  maxReplicas: {{ .Values.botfleet.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.botfleet.hpa.targetCPUUtilizationPercentage }}
+{{- end }}

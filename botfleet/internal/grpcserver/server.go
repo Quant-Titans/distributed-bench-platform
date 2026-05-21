@@ -17,6 +17,7 @@ import (
 type SpawnFleetRequest struct {
 	SessionID   string
 	EndpointURL string
+	FIXEndpoint string // TCP addr for FIX 4.4 acceptor (optional)
 	Symbol      string
 	BotCount    int32
 	TargetTPS   int32
@@ -67,19 +68,25 @@ func (s *Server) SpawnFleet(ctx context.Context, req SpawnFleetRequest) (*SpawnF
 	cfg.SessionID = req.SessionID
 	cfg.Symbol = req.Symbol
 	cfg.EndpointURL = req.EndpointURL
+	cfg.FIXEndpoint = req.FIXEndpoint
 	cfg.TargetTPS = int(req.TargetTPS)
 	cfg.DurationSec = req.DurationSec
 	cfg.Mix = req.Mix
 
 	if cfg.Mix == (worker.ArchetypeMix{}) {
-		// Default mix if none specified
+		// Default 1000-bot mix when caller does not specify per-archetype counts.
+		// Percentages: 25% MM, 20% Momentum, 30% Noise, 10% Slicer, 10% LatArb, 5% FIX
 		total := int(req.BotCount)
+		if total <= 0 {
+			total = 1000
+		}
 		cfg.Mix = worker.ArchetypeMix{
-			MarketMakers:         total * 20 / 100,
+			MarketMakers:         total * 25 / 100,
 			MomentumTraders:      total * 20 / 100,
 			NoiseTraders:         total * 30 / 100,
-			InstitutionalSlicers: total * 15 / 100,
-			LatencyArbs:          total * 15 / 100,
+			InstitutionalSlicers: total * 10 / 100,
+			LatencyArbs:          total * 10 / 100,
+			FIXNoise:             total * 5 / 100,
 		}
 	}
 

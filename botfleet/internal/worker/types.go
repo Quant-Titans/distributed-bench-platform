@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"net/http"
 	"time"
 )
 
@@ -14,10 +15,11 @@ const (
 	Momentum                            // trend-following
 	InstitutionalSlicer                 // iceberg large-order slicer
 	LatencyArb                          // adversarial speed arbitrage
+	FIXNoise                            // FIX 4.4 noise orders (domain knowledge signal)
 )
 
 func (a Archetype) String() string {
-	return [...]string{"NoiseTrader", "MarketMaker", "Momentum", "InstitutionalSlicer", "LatencyArb"}[a]
+	return [...]string{"NoiseTrader", "MarketMaker", "Momentum", "InstitutionalSlicer", "LatencyArb", "FIXNoise"}[a]
 }
 
 // Side is buy or sell.
@@ -77,8 +79,10 @@ type Bot interface {
 
 // Config holds per-bot configuration.
 type Config struct {
-	Symbol    string
-	TargetTPS int
-	SessionID string
-	SandboxID string
+	Symbol      string
+	TargetTPS   int
+	SessionID   string
+	SandboxID   string
+	HTTPClient  *http.Client // shared across the fleet; never nil
+	FIXEndpoint string       // TCP addr for FIX 4.4 acceptor (empty = REST only)
 }

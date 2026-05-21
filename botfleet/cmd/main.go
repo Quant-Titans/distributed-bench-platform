@@ -20,6 +20,7 @@ func main() {
 	kafkaBroker  := envOr("KAFKA_BROKER", "redpanda:9092")
 	metricsTopic := envOr("METRICS_TOPIC", "bench.raw_metrics")
 	replayTopic  := envOr("REPLAY_TOPIC", "bench.replay_log")
+	fixEndpoint  := envOr("FIX_ENDPOINT", "") // optional: host:port of FIX acceptor
 	listenAddr   := envOr("LISTEN_ADDR", ":9090")
 	httpAddr     := envOr("HTTP_ADDR", ":9091")
 
@@ -27,6 +28,7 @@ func main() {
 		KafkaBroker:  kafkaBroker,
 		MetricsTopic: metricsTopic,
 		ReplayTopic:  replayTopic,
+		FIXEndpoint:  fixEndpoint,
 	}
 
 	srv := grpcserver.New(fleetCfg)

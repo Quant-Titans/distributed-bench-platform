@@ -2,27 +2,12 @@ package worker
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
-	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-// ── Shared HTTP client ─────────────────────────────────────────────────────────
-
-func newHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        200,
-			MaxIdleConnsPerHost: 200,
-			IdleConnTimeout:     90 * time.Second,
-		},
-	}
-}
 
 // ── 1. Noise Trader ───────────────────────────────────────────────────────────
 // Sends random Limit/Market orders. Baseline bot; creates background noise.
@@ -39,7 +24,6 @@ func NewNoiseBot(cfg Config) *NoiseBot {
 func (b *NoiseBot) Archetype() Archetype { return NoiseTrader }
 
 func (b *NoiseBot) Run(ctx context.Context, endpoint string, out chan<- Metrics) error {
-	client := newHTTPClient()
 	ticker := time.NewTicker(rateToInterval(b.cfg.TargetTPS))
 	defer ticker.Stop()
 
@@ -56,7 +40,7 @@ func (b *NoiseBot) Run(ctx context.Context, endpoint string, out chan<- Metrics)
 				Type: Limit, Price: price, Quantity: int64(b.rng.Intn(10) + 1),
 				Archetype: NoiseTrader, EmittedAt: time.Now(),
 			}
-			fill, rtt, err := sendOrder(ctx, client, endpoint, o)
+			fill, rtt, err := sendOrder(ctx, b.cfg.HTTPClient, endpoint, o)
 			if err != nil {
 				continue
 			}
@@ -75,12 +59,12 @@ func (b *NoiseBot) Run(ctx context.Context, endpoint string, out chan<- Metrics)
 
 // ── 2. Market Maker (Avellaneda-Stoikov) ─────────────────────────────────────
 // Quotes a bid and ask around the fair price, adjusting spread based on
-// inventory risk using the A-S model: δ_bid/ask = γσ²(T-t) ± γσ²(T-t)/2 + ln(1+γ/k)/γ
+// inventory risk: r = s - q·γ·σ²·(T-t), δ = γ·σ²·(T-t) + (2/γ)·ln(1+γ/κ)
 
 type MarketMakerBot struct {
 	cfg       Config
 	rng       *rand.Rand
-	inventory int64   // signed inventory in base asset
+	inventory int64
 	gamma     float64 // risk aversion (0.1)
 	sigma     float64 // volatility estimate
 	kappa     float64 // order book liquidity param
@@ -96,12 +80,11 @@ func NewMarketMakerBot(cfg Config) *MarketMakerBot {
 func (b *MarketMakerBot) Archetype() Archetype { return MarketMaker }
 
 func (b *MarketMakerBot) Run(ctx context.Context, endpoint string, out chan<- Metrics) error {
-	client := newHTTPClient()
 	ticker := time.NewTicker(rateToInterval(b.cfg.TargetTPS))
 	defer ticker.Stop()
 
 	midPrice := 100.0
-	T := 1.0 // horizon in "time units"
+	T := 1.0
 	t := 0.0
 
 	for {
@@ -115,24 +98,20 @@ func (b *MarketMakerBot) Run(ctx context.Context, endpoint string, out chan<- Me
 			}
 			dt := T - t
 
-			// A-S reservation price: r = s - q*γ*σ²*(T-t)
 			q := float64(b.inventory)
 			reservation := midPrice - q*b.gamma*b.sigma*b.sigma*dt
-
-			// A-S optimal spread: δ = γ*σ²*(T-t) + (2/γ)*ln(1+γ/κ)
 			spread := b.gamma*b.sigma*b.sigma*dt + (2/b.gamma)*math.Log(1+b.gamma/b.kappa)
 			halfSpread := spread / 2
 
 			bidPrice := reservation - halfSpread
 			askPrice := reservation + halfSpread
 
-			// Submit bid
 			bid := Order{
 				ID: newOrderID(), Symbol: b.cfg.Symbol, Side: Buy,
 				Type: Limit, Price: bidPrice, Quantity: 1,
 				Archetype: MarketMaker, EmittedAt: time.Now(),
 			}
-			if fill, rtt, err := sendOrder(ctx, client, endpoint, bid); err == nil {
+			if fill, rtt, err := sendOrder(ctx, b.cfg.HTTPClient, endpoint, bid); err == nil {
 				if fill.FillQty > 0 {
 					b.inventory += fill.FillQty
 				}
@@ -143,13 +122,12 @@ func (b *MarketMakerBot) Run(ctx context.Context, endpoint string, out chan<- Me
 				}
 			}
 
-			// Submit ask
 			ask := Order{
 				ID: newOrderID(), Symbol: b.cfg.Symbol, Side: Sell,
 				Type: Limit, Price: askPrice, Quantity: 1,
 				Archetype: MarketMaker, EmittedAt: time.Now(),
 			}
-			if fill, rtt, err := sendOrder(ctx, client, endpoint, ask); err == nil {
+			if fill, rtt, err := sendOrder(ctx, b.cfg.HTTPClient, endpoint, ask); err == nil {
 				if fill.FillQty > 0 {
 					b.inventory -= fill.FillQty
 				}
@@ -160,15 +138,13 @@ func (b *MarketMakerBot) Run(ctx context.Context, endpoint string, out chan<- Me
 				}
 			}
 
-			// Update mid-price estimate (GBM random walk)
-			midPrice *= math.Exp((b.rng.Float64()-0.5)*b.sigma*0.001)
+			midPrice *= math.Exp((b.rng.Float64()-0.5) * b.sigma * 0.001)
 		}
 	}
 }
 
 // ── 3. Momentum Trader ────────────────────────────────────────────────────────
-// Tracks a moving average; buys on uptrend, sells on downtrend.
-// Creates cascading order flow that stresses queue management.
+// Tracks a short/long MA crossover; buys on uptrend, sells on downtrend.
 
 type MomentumBot struct {
 	cfg    Config
@@ -184,7 +160,6 @@ func NewMomentumBot(cfg Config) *MomentumBot {
 func (b *MomentumBot) Archetype() Archetype { return Momentum }
 
 func (b *MomentumBot) Run(ctx context.Context, endpoint string, out chan<- Metrics) error {
-	client := newHTTPClient()
 	ticker := time.NewTicker(rateToInterval(b.cfg.TargetTPS))
 	defer ticker.Stop()
 
@@ -194,8 +169,7 @@ func (b *MomentumBot) Run(ctx context.Context, endpoint string, out chan<- Metri
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			// Simulate price observation (in production this reads from the last fill)
-			midPrice *= math.Exp((b.rng.Float64()-0.5)*0.01)
+			midPrice *= math.Exp((b.rng.Float64()-0.5) * 0.01)
 			b.prices = append(b.prices, midPrice)
 			if len(b.prices) > b.window*2 {
 				b.prices = b.prices[1:]
@@ -221,13 +195,13 @@ func (b *MomentumBot) Run(ctx context.Context, endpoint string, out chan<- Metri
 				Type: Market, Quantity: int64(b.rng.Intn(5) + 1),
 				Archetype: Momentum, EmittedAt: time.Now(),
 			}
-			fill, rtt, err := sendOrder(ctx, client, endpoint, o)
+			fill, rtt, err := sendOrder(ctx, b.cfg.HTTPClient, endpoint, o)
 			if err != nil {
 				continue
 			}
 			out <- Metrics{
 				OrderID: o.ID, Archetype: Momentum, AppRTTNS: rtt.Nanoseconds(),
-				Correct: fill.FillQty > 0 || fill.Status == "PENDING",
+				Correct:   fill.FillQty > 0 || fill.Status == "PENDING",
 				FillPrice: fill.FillPrice, FillQty: fill.FillQty,
 				EmittedNS: o.EmittedAt.UnixNano(),
 			}
@@ -236,14 +210,14 @@ func (b *MomentumBot) Run(ctx context.Context, endpoint string, out chan<- Metri
 }
 
 // ── 4. Institutional Slicer ───────────────────────────────────────────────────
-// Splits a large "parent" order into time-randomised iceberg child slices
-// (VWAP/TWAP style). Tests the matching engine's handling of sustained flow.
+// Splits a large parent order into time-randomised iceberg child slices
+// (TWAP style). Tests sustained flow handling in the matching engine.
 
 type InstitutionalSlicerBot struct {
-	cfg         Config
-	rng         *rand.Rand
-	parentSize  int64 // total size of the institutional order
-	sliceSize   int64 // max size per slice
+	cfg        Config
+	rng        *rand.Rand
+	parentSize int64
+	sliceSize  int64
 }
 
 func NewInstitutionalSlicerBot(cfg Config) *InstitutionalSlicerBot {
@@ -256,7 +230,6 @@ func NewInstitutionalSlicerBot(cfg Config) *InstitutionalSlicerBot {
 func (b *InstitutionalSlicerBot) Archetype() Archetype { return InstitutionalSlicer }
 
 func (b *InstitutionalSlicerBot) Run(ctx context.Context, endpoint string, out chan<- Metrics) error {
-	client := newHTTPClient()
 	midPrice := 100.0
 
 	for {
@@ -266,7 +239,6 @@ func (b *InstitutionalSlicerBot) Run(ctx context.Context, endpoint string, out c
 		default:
 		}
 
-		// New parent order
 		remaining := b.parentSize
 		side := Side(b.rng.Intn(2))
 		parentPrice := midPrice * (1 + (b.rng.Float64()-0.5)*0.005)
@@ -284,7 +256,6 @@ func (b *InstitutionalSlicerBot) Run(ctx context.Context, endpoint string, out c
 			}
 			remaining -= qty
 
-			// TWAP: random sleep between slices (50-200ms)
 			jitter := time.Duration(50+b.rng.Intn(150)) * time.Millisecond
 			select {
 			case <-ctx.Done():
@@ -297,7 +268,7 @@ func (b *InstitutionalSlicerBot) Run(ctx context.Context, endpoint string, out c
 				Type: Limit, Price: parentPrice, Quantity: qty,
 				Archetype: InstitutionalSlicer, EmittedAt: time.Now(),
 			}
-			fill, rtt, err := sendOrder(ctx, client, endpoint, o)
+			fill, rtt, err := sendOrder(ctx, b.cfg.HTTPClient, endpoint, o)
 			if err != nil {
 				continue
 			}
@@ -308,7 +279,6 @@ func (b *InstitutionalSlicerBot) Run(ctx context.Context, endpoint string, out c
 			}
 		}
 
-		// Cool-off between parent orders
 		select {
 		case <-ctx.Done():
 			return nil
@@ -318,8 +288,8 @@ func (b *InstitutionalSlicerBot) Run(ctx context.Context, endpoint string, out c
 }
 
 // ── 5. Latency Arbitrageur ────────────────────────────────────────────────────
-// Fires aggressive Market orders as fast as possible, exploiting any stale
-// quotes visible in the book. Maximum concurrency stress on the engine.
+// Fires aggressive Market orders at maximum rate to exploit stale quotes.
+// Rate-capped at 5000 TPS per bot to prevent runaway goroutine spinning.
 
 type LatencyArbBot struct {
 	cfg Config
@@ -333,31 +303,33 @@ func NewLatencyArbBot(cfg Config) *LatencyArbBot {
 func (b *LatencyArbBot) Archetype() Archetype { return LatencyArb }
 
 func (b *LatencyArbBot) Run(ctx context.Context, endpoint string, out chan<- Metrics) error {
-	client := newHTTPClient()
-	// No rate limiter — fire at max speed to stress-test the engine
+	// Cap at 5000 TPS per arb bot — aggressive enough to stress the engine
+	// without spinning a bare goroutine loop.
+	const maxTPS = 5000
+	ticker := time.NewTicker(rateToInterval(maxTPS))
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		default:
-		}
-
-		side := Side(b.rng.Intn(2))
-		o := Order{
-			ID: newOrderID(), Symbol: b.cfg.Symbol, Side: side,
-			Type: Market, Quantity: int64(b.rng.Intn(3) + 1),
-			Archetype: LatencyArb, EmittedAt: time.Now(),
-		}
-		fill, rtt, err := sendOrder(ctx, client, endpoint, o)
-		if err != nil {
-			time.Sleep(time.Millisecond)
-			continue
-		}
-		out <- Metrics{
-			OrderID: o.ID, Archetype: LatencyArb, AppRTTNS: rtt.Nanoseconds(),
-			Correct: fill.FillQty > 0 || fill.Status == "PENDING",
-			FillPrice: fill.FillPrice, FillQty: fill.FillQty,
-			EmittedNS: o.EmittedAt.UnixNano(),
+		case <-ticker.C:
+			side := Side(b.rng.Intn(2))
+			o := Order{
+				ID: newOrderID(), Symbol: b.cfg.Symbol, Side: side,
+				Type: Market, Quantity: int64(b.rng.Intn(3) + 1),
+				Archetype: LatencyArb, EmittedAt: time.Now(),
+			}
+			fill, rtt, err := sendOrder(ctx, b.cfg.HTTPClient, endpoint, o)
+			if err != nil {
+				continue
+			}
+			out <- Metrics{
+				OrderID: o.ID, Archetype: LatencyArb, AppRTTNS: rtt.Nanoseconds(),
+				Correct:   fill.FillQty > 0 || fill.Status == "PENDING",
+				FillPrice: fill.FillPrice, FillQty: fill.FillQty,
+				EmittedNS: o.EmittedAt.UnixNano(),
+			}
 		}
 	}
 }
@@ -365,7 +337,7 @@ func (b *LatencyArbBot) Run(ctx context.Context, endpoint string, out chan<- Met
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 func newOrderID() string {
-	return fmt.Sprintf("ord-%s", uuid.New().String()[:8])
+	return "ord-" + uuid.New().String()[:8]
 }
 
 func rateToInterval(tps int) time.Duration {

@@ -28,8 +28,8 @@ type OrderResponse struct {
 }
 
 // sendOrder sends an order to the contestant's endpoint and returns the fill
-// plus the app-layer RTT. All latency measurement happens here; kernel-level
-// RTT is measured separately by the eBPF TC hook.
+// plus the app-layer RTT. Callers pass the fleet's shared *http.Client so all
+// bots share a single connection pool — essential at 1000+ bot scale.
 func sendOrder(ctx context.Context, client *http.Client, endpoint string, o Order) (OrderResponse, time.Duration, error) {
 	req := OrderRequest{
 		OrderID:  o.ID,

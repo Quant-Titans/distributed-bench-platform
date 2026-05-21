@@ -27,6 +27,13 @@ go.work.sum
 # env file
 .env
 
+# Terraform — never commit real credentials
+infra/terraform/terraform.tfvars
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+
 # Editor/IDE
 # .idea/
 # .vscode/
@@ -40,3 +47,6 @@ leaderboard/dist/
 sandbox/bin/
 botfleet/bin/
 telemetry/bin/
+
+# Submission packages
+dist/

@@ -14,7 +14,8 @@ terraform {
       version = "~> 2.14"
     }
   }
-  # Remote state — uncomment for team use
+
+  # Uncomment for team use (create the bucket first):
   # backend "s3" {
   #   bucket = "quant-titans-tfstate"
   #   key    = "prod/terraform.tfstate"
@@ -24,6 +25,35 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+}
+
+# ── Kubernetes + Helm providers — configured from EKS outputs ────────────────
+# Terraform evaluates providers before creating resources, but data sources that
+# depend on resources (EKS) are refreshed during the apply phase, so this
+# pattern works in a single terraform apply run.
+
+data "aws_eks_cluster" "this" {
+  name       = module.eks.cluster_name
+  depends_on = [module.eks]
+}
+
+data "aws_eks_cluster_auth" "this" {
+  name       = module.eks.cluster_name
+  depends_on = [module.eks]
+}
+
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.this.token
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = data.aws_eks_cluster.this.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.this.token
+  }
 }
 
 # ── VPC ───────────────────────────────────────────────────────────────────────
@@ -43,6 +73,14 @@ module "vpc" {
   single_nat_gateway   = true # cost-optimised for hackathon
   enable_dns_hostnames = true
 
+  # Required tags for EKS to discover subnets for load balancers
+  public_subnet_tags = {
+    "kubernetes.io/role/elb" = "1"
+  }
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+
   tags = local.common_tags
 }
 
@@ -59,22 +97,40 @@ module "eks" {
   subnet_ids                     = module.vpc.private_subnets
   cluster_endpoint_public_access = true
 
+  # EBS CSI driver — required for PersistentVolumeClaims (TimescaleDB, Redis)
+  cluster_addons = {
+    aws-ebs-csi-driver = {
+      most_recent = true
+    }
+    coredns = {
+      most_recent = true
+    }
+    kube-proxy = {
+      most_recent = true
+    }
+    vpc-cni = {
+      most_recent = true
+    }
+  }
+
   eks_managed_node_groups = {
-    # CPU-pinned worker nodes for sandbox execution
+    # CPU-pinned worker nodes for sandbox execution (NET_ADMIN for eBPF TC hooks)
     sandbox = {
       instance_types = ["c6i.2xlarge"]
-      min_size       = 2
-      max_size       = 10
-      desired_size   = 3
+      min_size       = 1
+      max_size       = 6
+      desired_size   = 2
       labels         = { role = "sandbox" }
-      taints = [{
-        key    = "role"
-        value  = "sandbox"
-        effect = "NO_SCHEDULE"
-      }]
+      taints = [
+        {
+          key    = "role"
+          value  = "sandbox"
+          effect = "NO_SCHEDULE"
+        }
+      ]
     }
 
-    # General purpose nodes for botfleet + telemetry
+    # General purpose nodes for botfleet, telemetry, data stores, redpanda
     general = {
       instance_types = ["m6i.xlarge"]
       min_size       = 2
@@ -87,66 +143,71 @@ module "eks" {
   tags = local.common_tags
 }
 
-# ── TimescaleDB (RDS PostgreSQL with TimescaleDB extension) ──────────────────
+# ── Kubernetes namespace ──────────────────────────────────────────────────────
 
-resource "aws_db_subnet_group" "timescale" {
-  name       = "quant-titans-timescale"
-  subnet_ids = module.vpc.private_subnets
-  tags       = local.common_tags
-}
-
-resource "aws_security_group" "timescale" {
-  name   = "quant-titans-timescale"
-  vpc_id = module.vpc.vpc_id
-
-  ingress {
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = [module.vpc.vpc_cidr_block]
+resource "kubernetes_namespace" "quant_titans" {
+  metadata {
+    name = var.k8s_namespace
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
   }
-  tags = local.common_tags
+
+  depends_on = [module.eks]
 }
 
-resource "aws_db_instance" "timescale" {
-  identifier        = "quant-titans-timescale"
-  engine            = "postgres"
-  engine_version    = "16"
-  instance_class    = "db.t3.medium"
-  allocated_storage = 100
-  storage_type      = "gp3"
+# ── GHCR image pull secret ────────────────────────────────────────────────────
+# Images are built by GitHub Actions and pushed to ghcr.io/quant-titans.
+# This secret lets EKS pull them.
 
-  db_name  = "benchmarks"
-  username = "benchuser"
-  password = var.db_password
-
-  db_subnet_group_name   = aws_db_subnet_group.timescale.name
-  vpc_security_group_ids = [aws_security_group.timescale.id]
-  skip_final_snapshot    = true # hackathon — skip final snapshot
-  publicly_accessible    = false
-
-  tags = local.common_tags
+resource "kubernetes_secret" "ghcr_pull" {
+  metadata {
+    name      = "ghcr-pull-secret"
+    namespace = kubernetes_namespace.quant_titans.metadata[0].name
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = jsonencode({
+      auths = {
+        "ghcr.io" = {
+          auth = base64encode("${var.ghcr_username}:${var.ghcr_token}")
+        }
+      }
+    })
+  }
 }
 
-# ── Elasticache Redis ─────────────────────────────────────────────────────────
+# ── Platform Helm release ─────────────────────────────────────────────────────
+# Deploys: Redpanda, TimescaleDB, Redis, Sandbox, BotFleet, Telemetry, Leaderboard
+# A single terraform apply wires everything.
 
-resource "aws_elasticache_subnet_group" "redis" {
-  name       = "quant-titans-redis"
-  subnet_ids = module.vpc.private_subnets
+resource "helm_release" "platform" {
+  name             = "quant-titans"
+  chart            = "${path.module}/../../helm/platform"
+  namespace        = kubernetes_namespace.quant_titans.metadata[0].name
+  create_namespace = false
+  wait             = true
+  timeout          = 600 # 10 minutes — Redpanda StatefulSet takes time
+
+  set {
+    name  = "image.tag"
+    value = var.image_tag
+  }
+
+  set {
+    name  = "image.registry"
+    value = "ghcr.io/quant-titans"
+  }
+
+  set_sensitive {
+    name  = "timescaledb.password"
+    value = var.db_password
+  }
+
+  depends_on = [kubernetes_namespace.quant_titans]
 }
 
-resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "quant-titans-redis"
-  engine               = "redis"
-  node_type            = "cache.t3.micro"
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
-  subnet_group_name    = aws_elasticache_subnet_group.redis.name
-  tags                 = local.common_tags
-}
-
-# ── Redpanda (self-managed on EKS, deployed via Helm) ────────────────────────
-# Redpanda Helm chart is deployed in infra/helm/platform
+# ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
   common_tags = {

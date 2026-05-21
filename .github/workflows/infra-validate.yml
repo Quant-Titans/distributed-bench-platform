@@ -5,6 +5,7 @@ on:
     branches: [main, "feat/**"]
     paths:
       - "infra/**"
+      - ".github/workflows/infra-validate.yml"
   pull_request:
     paths:
       - "infra/**"

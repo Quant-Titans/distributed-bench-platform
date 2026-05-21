@@ -87,6 +87,9 @@ services:
       LISTEN_ADDR: ":8080"
       KAFKA_BROKER: "redpanda:29092"
       EBPF_TOPIC: "telemetry.kernel_latency"
+      BOTFLEET_HTTP_ADDR: "http://botfleet:9091"
+      SANDBOX_NETWORK: "host"
+      SANDBOX_INSECURE: "true"
     depends_on:
       redpanda-init:
         condition: service_completed_successfully
@@ -99,17 +102,24 @@ services:
   botfleet:
     build: ./botfleet
     ports:
-      - "9090:9090"
+      - "9090:9090"   # gRPC
+      - "9091:9091"   # HTTP spawn API
     networks:
       - quantnet
     environment:
       LISTEN_ADDR: ":9090"
+      HTTP_ADDR: ":9091"
       KAFKA_BROKER: "redpanda:29092"
       METRICS_TOPIC: "bench.raw_metrics"
       REPLAY_TOPIC: "bench.replay_log"
     depends_on:
       redpanda-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9091/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   telemetry:
     build: ./telemetry

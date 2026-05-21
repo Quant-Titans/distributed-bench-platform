@@ -1,5 +1,6 @@
 .PHONY: up down smoke build test sandbox-deps sandbox-build sandbox-test botfleet-build \
-        leaderboard-build telemetry-build ebpf-build proto proto-clean gen-deps lint clean deploy submission
+        leaderboard-build telemetry-build ebpf-build proto proto-clean gen-deps lint clean \
+        deploy destroy status submission
 
 GOPATH_BIN := $(shell go env GOPATH)/bin
 PROTO_SRC   := $(wildcard proto/*.proto)

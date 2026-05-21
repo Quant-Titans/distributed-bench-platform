@@ -125,9 +125,11 @@ func New(kafkaCfg KafkaConfig) (*Manager, error) {
 		ipRegistry:     make(map[string]string),
 	}
 
-	if err := m.ensureNetwork(context.Background()); err != nil {
-		cli.Close()
-		return nil, fmt.Errorf("setup sandbox network: %w", err)
+	if !insecure {
+		if err := m.ensureNetwork(context.Background()); err != nil {
+			cli.Close()
+			return nil, fmt.Errorf("setup sandbox network: %w", err)
+		}
 	}
 
 	return m, nil

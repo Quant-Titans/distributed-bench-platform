@@ -1,9 +1,11 @@
 # Local kind overrides — scaled-down resources, NodePort services, eBPF disabled
 image:
-  pullPolicy: IfNotPresent
-  pullSecrets: []   # no private registry locally
+  registry: quant-titans   # local — loaded via kind load docker-image
+  pullPolicy: Never        # never try remote registry in kind
+  pullSecrets: []
 
 timescaledb:
+  image: timescale/timescaledb:latest-pg16   # latest-pg16 is multi-arch (amd64 + arm64)
   storage: 1Gi
   resources:
     requests: { cpu: "200m", memory: "256Mi" }
@@ -17,6 +19,11 @@ redis:
 
 sandbox:
   replicas: 1
+  service:
+    type: NodePort
+    nodePort: 30080   # kind cluster.yaml forwards hostPort 8080 → containerPort 30080
+  dockerSock:
+    enabled: false   # kind nodes have no docker.sock — sandbox spawns via K8s API instead
   resources:
     requests: { cpu: "250m", memory: "256Mi" }
     limits:   { cpu: "1",    memory: "512Mi" }
@@ -57,17 +64,31 @@ leaderboard:
     limits:   { cpu: "200m", memory: "128Mi" }
 
 redpanda:
+  tls:
+    enabled: false   # no cert-manager in local kind
+  listeners:
+    http:
+      external:
+        default:
+          enabled: false   # frees NodePort 30082 for the leaderboard service
+    schemaRegistry:
+      external:
+        default:
+          enabled: false   # frees NodePort 30081
   statefulset:
     replicas: 1
   storage:
     persistentVolume:
       size: 2Gi
   resources:
-    requests: { cpu: "200m", memory: "512Mi" }
-    limits:   { cpu: "1",    memory: "1Gi" }
+    requests: { cpu: "200m", memory: "1500Mi" }
+    limits:   { cpu: "1",    memory: "1500Mi" }
+    memory:
+      redpanda:
+        memory: 1000Mi     # heap given to Redpanda broker
+        reserveMemory: 0Mi # no OS reserve — safe in k8s with limits set
   config:
     rpk:
       additional_start_flags:
         - "--smp=1"
-        - "--memory=512M"
         - "--overprovisioned"

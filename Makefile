@@ -2,9 +2,11 @@
         leaderboard-build telemetry-build ebpf-build proto proto-clean gen-deps lint clean \
         deploy destroy status submission
 
-GOPATH_BIN := $(shell go env GOPATH)/bin
-PROTO_SRC   := $(wildcard proto/*.proto)
-GEN_DIR     := gen/proto
+GOPATH_BIN   := $(shell go env GOPATH)/bin
+PROTO_SRC    := $(wildcard proto/*.proto)
+GEN_DIR      := gen/proto
+KIND_CLUSTER := quant-titans
+NAMESPACE    := quant-titans
 
 up:
 	docker-compose up --build -d
@@ -132,37 +134,27 @@ lint:
 	golangci-lint run ./...
 
 # ── One-command deploy ────────────────────────────────────────────────────────
-# Prerequisites: terraform ≥1.6, aws CLI (authenticated), helm ≥3.14, kubectl
+# Prerequisites: kind, helm ≥3.14, kubectl, docker (running)
 deploy:
-	@echo "==> [1/4] Provisioning VPC + EKS cluster (terraform apply)..."
-	cd infra/terraform && terraform init -input=false && terraform apply -auto-approve -input=false
-	@echo "==> [2/4] Configuring kubectl for the new cluster..."
-	aws eks update-kubeconfig --name quant-titans --region eu-north-1
-	@echo "==> [3/4] Updating Helm chart dependencies (Redpanda chart)..."
-	helm repo add redpanda https://charts.redpanda.com 2>/dev/null || true
-	helm dependency update infra/helm/platform
-	@echo "==> [4/4] Deploying platform Helm chart..."
-	helm upgrade --install quant-titans infra/helm/platform \
-		--namespace quant-titans --create-namespace \
-		--wait --timeout 15m
-	@echo ""
-	@echo "✓ Platform deployed. Run 'make status' to verify."
+	@bash infra/kind/cluster-up.sh
 
 destroy:
-	cd infra/terraform && terraform destroy -auto-approve -input=false
-	@echo "✓ All AWS resources destroyed."
+	kind delete cluster --name $(KIND_CLUSTER) 2>/dev/null || true
+	@echo "✓ kind cluster '$(KIND_CLUSTER)' deleted."
 
 status:
+	@echo "── Nodes ─────────────────────────────────────────────────────────"
+	@kubectl get nodes -L role
+	@echo ""
 	@echo "── Pods ──────────────────────────────────────────────────────────"
-	@kubectl get pods -n quant-titans
+	@kubectl get pods -n $(NAMESPACE)
 	@echo ""
 	@echo "── Services ──────────────────────────────────────────────────────"
-	@kubectl get svc -n quant-titans
+	@kubectl get svc -n $(NAMESPACE)
 	@echo ""
-	@echo "── Leaderboard URL ───────────────────────────────────────────────"
-	@kubectl get svc leaderboard -n quant-titans \
-		-o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null \
-		|| echo "(LoadBalancer still provisioning — retry in 2 min)"
+	@echo "── Endpoints ─────────────────────────────────────────────────────"
+	@echo "  Leaderboard → http://localhost:8082"
+	@echo "  Sandbox API → http://localhost:8080"
 	@echo ""
 
 # ── Submission packaging ─────────────────────────────────────────────────────

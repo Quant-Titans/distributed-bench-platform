@@ -1,0 +1,73 @@
+# Local kind overrides — scaled-down resources, NodePort services, eBPF disabled
+image:
+  pullPolicy: IfNotPresent
+  pullSecrets: []   # no private registry locally
+
+timescaledb:
+  storage: 1Gi
+  resources:
+    requests: { cpu: "200m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }
+
+redis:
+  storage: 512Mi
+  resources:
+    requests: { cpu: "50m",  memory: "64Mi" }
+    limits:   { cpu: "200m", memory: "256Mi" }
+
+sandbox:
+  replicas: 1
+  resources:
+    requests: { cpu: "250m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "512Mi" }
+  env:
+    KAFKA_BROKER:     "quant-titans-redpanda:9092"
+    EBPF_TOPIC:       "telemetry.kernel_latency"
+    EVENTS_TOPIC:     "bench.events"
+    SANDBOX_INSECURE: "true"   # disables eBPF + seccomp for local kind (no Linux kernel access)
+    SANDBOX_NETWORK:  "host"
+  nodeSelector: {}
+  tolerations: []
+
+botfleet:
+  replicas: 1
+  resources:
+    requests: { cpu: "200m", memory: "128Mi" }
+    limits:   { cpu: "1",    memory: "512Mi" }
+  hpa:
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+
+telemetry:
+  replicas: 1
+  resources:
+    requests: { cpu: "200m", memory: "128Mi" }
+    limits:   { cpu: "1",    memory: "512Mi" }
+
+leaderboard:
+  replicas: 1
+  service:
+    type: NodePort
+    port: 80
+    targetPort: 8082
+    nodePort: 30082
+  resources:
+    requests: { cpu: "50m",  memory: "64Mi" }
+    limits:   { cpu: "200m", memory: "128Mi" }
+
+redpanda:
+  statefulset:
+    replicas: 1
+  storage:
+    persistentVolume:
+      size: 2Gi
+  resources:
+    requests: { cpu: "200m", memory: "512Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }
+  config:
+    rpk:
+      additional_start_flags:
+        - "--smp=1"
+        - "--memory=512M"
+        - "--overprovisioned"

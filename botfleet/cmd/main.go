@@ -56,6 +56,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/spawn", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			SessionID   string `json:"session_id"`
+			TeamName    string `json:"team_name"`
 			EndpointURL string `json:"endpoint_url"`
 			Symbol      string `json:"symbol"`
 			BotCount    int32  `json:"bot_count"`
@@ -80,6 +81,7 @@ func main() {
 		}
 		fleetResp, err := srv.SpawnFleet(r.Context(), grpcserver.SpawnFleetRequest{
 			SessionID:   req.SessionID,
+			TeamName:    req.TeamName,
 			EndpointURL: req.EndpointURL,
 			Symbol:      req.Symbol,
 			BotCount:    req.BotCount,

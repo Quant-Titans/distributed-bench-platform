@@ -233,7 +233,7 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		return nil, fmt.Errorf("container inspect: %w", err)
 	}
 
-	containerIP := "127.0.0.1" // default for host-network mode
+	containerIP := "host.docker.internal" // host-net: other containers reach host via this DNS name
 	if !useHostNet {
 		if n, ok := inspect.NetworkSettings.Networks[m.sandboxNetwork]; ok {
 			containerIP = n.IPAddress

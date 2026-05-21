@@ -33,11 +33,12 @@ services:
     networks:
       - quantnet
     entrypoint: ["/bin/sh", "-c"]
-    command: |
-      "rpk topic create bench.raw_metrics bench.replay_log bench.scores bench.events telemetry.kernel_latency \
-        --brokers redpanda:29092 \
-        --partitions 4 \
-        --replicas 1 || true"
+    command: >-
+      rpk topic create bench.raw_metrics --brokers redpanda:29092 --partitions 4 --replicas 1 || true &&
+      rpk topic create bench.replay_log  --brokers redpanda:29092 --partitions 4 --replicas 1 || true &&
+      rpk topic create bench.scores      --brokers redpanda:29092 --partitions 4 --replicas 1 || true &&
+      rpk topic create bench.events      --brokers redpanda:29092 --partitions 4 --replicas 1 || true &&
+      rpk topic create telemetry.kernel_latency --brokers redpanda:29092 --partitions 4 --replicas 1 || true
     restart: "no"
 
   timescaledb:
@@ -89,7 +90,7 @@ services:
       EBPF_TOPIC: "telemetry.kernel_latency"
       EVENTS_TOPIC: "bench.events"
       BOTFLEET_HTTP_ADDR: "http://botfleet:9091"
-      SANDBOX_NETWORK: "host"
+      SANDBOX_NETWORK: "distributed-bench-platform_quantnet"
       SANDBOX_INSECURE: "true"
     depends_on:
       redpanda-init:

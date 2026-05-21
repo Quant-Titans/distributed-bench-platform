@@ -50,6 +50,7 @@ type sessionState struct {
 	hdr       *LatencyHistogram
 	validator *Validator
 	startedAt time.Time
+	teamName   string
 	orderCount int64
 	peakTPS    float64
 	// Chaos resilience tracking
@@ -78,6 +79,9 @@ func (e *Engine) Handle(ctx context.Context, metrics []consumer.RawMetric) error
 	e.mu.Lock()
 	for _, m := range metrics {
 		s := e.getOrCreateSession(m.SessionID)
+		if m.TeamName != "" && s.teamName == "" {
+			s.teamName = m.TeamName
+		}
 		if m.AppRTTNS > 0 {
 			s.hdr.RecordApp(m.AppRTTNS)
 		}
@@ -198,6 +202,7 @@ func (e *Engine) Compute(sessionID string) CompositeScore {
 
 	return CompositeScore{
 		SessionID:           sessionID,
+		TeamName:            s.teamName,
 		P50NS:               p50,
 		P90NS:               p90,
 		P99NS:               p99,

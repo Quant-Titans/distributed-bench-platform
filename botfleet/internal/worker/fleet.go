@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ type ArchetypeMix struct {
 type FleetConfig struct {
 	FleetID      string
 	SessionID    string
+	TeamName     string
 	Symbol       string
 	EndpointURL  string
 	FIXEndpoint  string // TCP addr for FIX acceptor (host:port)
@@ -79,6 +81,10 @@ func NewFleet(cfg FleetConfig) *Fleet {
 func (f *Fleet) Run(ctx context.Context) error {
 	defer f.writer.Close()
 
+	log.Printf("fleet: starting fleet=%s session=%s endpoint=%s bots=%d tps=%d duration=%ds",
+		f.cfg.FleetID, f.cfg.SessionID, f.cfg.EndpointURL,
+		f.totalBots(), f.cfg.TargetTPS, f.cfg.DurationSec)
+
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(f.cfg.DurationSec)*time.Second)
 	defer cancel()
 
@@ -88,10 +94,16 @@ func (f *Fleet) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	f.spawnBots(runCtx, &wg, metricsCh)
 
-	go f.publishMetrics(runCtx, metricsCh)
+	pubDone := make(chan struct{})
+	go func() {
+		f.publishMetrics(context.Background(), metricsCh)
+		close(pubDone)
+	}()
 
 	wg.Wait()
+	log.Printf("fleet: all bots done fleet=%s orders_sent=%d", f.cfg.FleetID, f.ordersSent.Load())
 	close(metricsCh)
+	<-pubDone
 	return nil
 }
 
@@ -144,12 +156,20 @@ func (f *Fleet) publishMetrics(ctx context.Context, ch <-chan Metrics) {
 	batch := make([]kafka.Message, 0, 256)
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
+	var totalFlushed int
 
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
-		_ = f.writer.WriteMessages(ctx, batch...)
+		if err := f.writer.WriteMessages(ctx, batch...); err != nil {
+			log.Printf("fleet: kafka write error fleet=%s: %v", f.cfg.FleetID, err)
+		} else {
+			totalFlushed += len(batch)
+			if totalFlushed%100 == 0 || totalFlushed <= 10 {
+				log.Printf("fleet: flushed %d messages total fleet=%s", totalFlushed, f.cfg.FleetID)
+			}
+		}
 		batch = batch[:0]
 	}
 
@@ -165,6 +185,7 @@ func (f *Fleet) publishMetrics(ctx context.Context, ch <-chan Metrics) {
 
 			payload, err := json.Marshal(map[string]any{
 				"session_id": f.cfg.SessionID,
+				"team_name":  f.cfg.TeamName,
 				"fleet_id":   f.cfg.FleetID,
 				"order_id":   m.OrderID,
 				"archetype":  m.Archetype.String(),

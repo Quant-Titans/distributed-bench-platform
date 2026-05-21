@@ -133,21 +133,21 @@ func (h *Hub) removeClient(c *websocket.Conn) {
 func main() {
 	broker     := envOr("KAFKA_BROKER", "redpanda:9092")
 	scoreTopic := envOr("SCORE_TOPIC", "bench.scores")
-	groupID    := envOr("CONSUMER_GROUP", "leaderboard-ws")
 	listenAddr := envOr("LISTEN_ADDR", ":8082")
 	staticDir  := envOr("STATIC_DIR", "/app/dist")
 
 	hub := newHub()
 
 	// Kafka consumer — reads bench.scores and pushes to hub
+	// No GroupID: the leaderboard is a stateful in-memory store that replays all
+	// score history from offset 0 on every startup. This ensures a consistent
+	// ranking after restarts without needing to persist state externally.
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        []string{broker},
-		Topic:          scoreTopic,
-		GroupID:        groupID,
-		MinBytes:       1,
-		MaxBytes:       1e6,
-		CommitInterval: time.Second,
-		StartOffset:    kafka.LastOffset,
+		Brokers:     []string{broker},
+		Topic:       scoreTopic,
+		MinBytes:    1,
+		MaxBytes:    1e6,
+		StartOffset: kafka.FirstOffset,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

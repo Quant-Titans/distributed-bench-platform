@@ -14,6 +14,7 @@ import (
 // RawMetric is the event emitted by each bot per order, deserialized from Kafka.
 type RawMetric struct {
 	SessionID   string  `json:"session_id"`
+	TeamName    string  `json:"team_name"`
 	SandboxID   string  `json:"sandbox_id"`
 	OrderID     string  `json:"order_id"`
 	Archetype   string  `json:"archetype"`

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quant-Titans/distributed-bench-platform/telemetry/internal/consumer"
 	"github.com/Quant-Titans/distributed-bench-platform/telemetry/internal/scorer"
+	"github.com/Quant-Titans/distributed-bench-platform/telemetry/internal/store"
 )
 
 func main() {
@@ -18,12 +19,21 @@ func main() {
 	eventsTopic  := envOr("EVENTS_TOPIC", "bench.events")
 	scoreTopic   := envOr("SCORE_TOPIC", "bench.scores")
 	groupID      := envOr("CONSUMER_GROUP", "telemetry-engine")
-
-	engine := scorer.NewEngine(broker, scoreTopic)
-	cons   := consumer.New(broker, metricsTopic, ebpfTopic, eventsTopic, groupID, engine)
+	dbDSN        := envOr("TIMESCALEDB_URL", "")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	st, err := store.New(ctx, dbDSN)
+	if err != nil {
+		log.Printf("timescaledb unavailable (%v) — running without persistence", err)
+	} else if st != nil {
+		log.Println("timescaledb connected")
+		defer st.Close()
+	}
+
+	engine := scorer.NewEngine(broker, scoreTopic, st)
+	cons   := consumer.New(broker, metricsTopic, ebpfTopic, eventsTopic, groupID, engine, st)
 
 	log.Printf("telemetry engine starting (broker=%s)", broker)
 	cons.Run(ctx)

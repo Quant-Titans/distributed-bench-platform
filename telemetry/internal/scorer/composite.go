@@ -2,14 +2,15 @@ package scorer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/Quant-Titans/distributed-bench-platform/telemetry/internal/consumer"
+	"github.com/Quant-Titans/distributed-bench-platform/telemetry/internal/store"
 	kafka "github.com/segmentio/kafka-go"
-	"encoding/json"
 )
 
 // CompositeScore is the final benchmark result for a session.
@@ -38,10 +39,11 @@ type CompositeScore struct {
 
 // Engine processes raw metrics and emits composite scores to Kafka.
 type Engine struct {
-	mu        sync.Mutex
-	sessions  map[string]*sessionState
-	writer    *kafka.Writer
+	mu         sync.Mutex
+	sessions   map[string]*sessionState
+	writer     *kafka.Writer
 	scoreTopic string
+	store      *store.Store
 }
 
 type sessionState struct {
@@ -57,16 +59,17 @@ type sessionState struct {
 	chaosP99NS      float64
 }
 
-func NewEngine(broker, scoreTopic string) *Engine {
+func NewEngine(broker, scoreTopic string, st *store.Store) *Engine {
 	return &Engine{
-		sessions:   make(map[string]*sessionState),
-		writer:     kafka.NewWriter(kafka.WriterConfig{
+		sessions: make(map[string]*sessionState),
+		writer: kafka.NewWriter(kafka.WriterConfig{
 			Brokers:      []string{broker},
 			Topic:        scoreTopic,
 			Balancer:     &kafka.LeastBytes{},
 			BatchTimeout: 100 * time.Millisecond,
 		}),
 		scoreTopic: scoreTopic,
+		store:      st,
 	}
 }
 
@@ -82,7 +85,7 @@ func (e *Engine) Handle(ctx context.Context, metrics []consumer.RawMetric) error
 			s.hdr.RecordKernel(m.KernelRTTNS)
 		}
 		if m.OrderID != "" {
-			isBuy := true // default; real impl reads from order book state
+			isBuy := true
 			s.validator.RecordOrder(m.OrderID, m.FillPrice, isBuy)
 			if m.FillPrice > 0 || m.FillQty > 0 {
 				s.validator.RecordFill(m.OrderID, m.FillPrice, m.FillQty)
@@ -96,6 +99,19 @@ func (e *Engine) Handle(ctx context.Context, metrics []consumer.RawMetric) error
 				s.peakTPS = currentTPS
 			}
 		}
+		// Persist raw metric to TimescaleDB (async, non-blocking)
+		e.store.WriteRawMetric(store.RawMetricRow{
+			SessionID:   m.SessionID,
+			SandboxID:   m.SandboxID,
+			OrderID:     m.OrderID,
+			Archetype:   m.Archetype,
+			AppRTTNS:    m.AppRTTNS,
+			KernelRTTNS: m.KernelRTTNS,
+			FillCorrect: m.Correct,
+			FillPrice:   m.FillPrice,
+			FillQty:     m.FillQty,
+			ReplaySeq:   m.ReplaySeq,
+		})
 	}
 	e.mu.Unlock()
 
@@ -206,6 +222,26 @@ func (e *Engine) publish(ctx context.Context, score CompositeScore) error {
 	if err != nil {
 		return err
 	}
+	// Persist composite score to TimescaleDB (async, non-blocking)
+	e.store.WriteCompositeScore(store.CompositeScoreRow{
+		SessionID:           score.SessionID,
+		TeamName:            score.TeamName,
+		P50NS:               score.P50NS,
+		P90NS:               score.P90NS,
+		P99NS:               score.P99NS,
+		P999NS:              score.P999NS,
+		TPS:                 score.TPS,
+		PeakTPS:             score.PeakTPS,
+		FillAccuracy:        score.FillAccuracy,
+		PriceTimeViolations: score.PriceTimeViolations,
+		RecoveryTimeMS:      score.RecoveryTimeMS,
+		DegradationRatio:    score.DegradationRatio,
+		ThroughputScore:     score.ThroughputScore,
+		TailLatencyScore:    score.TailLatencyScore,
+		CorrectnessScore:    score.CorrectnessScore,
+		ResilienceScore:     score.ResilienceScore,
+		TotalScore:          score.TotalScore,
+	})
 	return e.writer.WriteMessages(ctx, kafka.Message{
 		Key:   []byte(score.SessionID),
 		Value: b,

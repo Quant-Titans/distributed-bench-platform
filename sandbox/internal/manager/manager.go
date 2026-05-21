@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -21,7 +22,6 @@ import (
 )
 
 const (
-	sandboxNetwork  = "sandbox_net"
 	seccompPath     = "/etc/sandbox/seccomp.json"
 	defaultMemoryMB = 512
 	defaultCPUCores = "0"
@@ -43,12 +43,14 @@ type Config struct {
 	TimeoutS     int      `json:"timeout_s"`
 	Env          []string `json:"env,omitempty"`
 	SessionID    string   `json:"session_id"`
-	ChaosEnabled bool     `json:"chaos_enabled"` // inject fault schedule after baseline
+	TeamName     string   `json:"team_name,omitempty"`
+	ChaosEnabled bool     `json:"chaos_enabled"`
 }
 
 type Info struct {
 	ID           string    `json:"id"`
 	SessionID    string    `json:"session_id"`
+	TeamName     string    `json:"team_name,omitempty"`
 	Image        string    `json:"image"`
 	Endpoint     string    `json:"endpoint"`
 	ContainerIP  string    `json:"container_ip"`
@@ -71,13 +73,15 @@ type chaosLifecycleEvent struct {
 }
 
 type Manager struct {
-	cli          *client.Client
-	seccompJSON  string
-	kafka        KafkaConfig
-	eventsWriter *kafka.Writer // nil when EventsTopic is empty
-	mu           sync.RWMutex
-	sandboxes    map[string]*Info
-	ipRegistry   map[string]string
+	cli            *client.Client
+	seccompJSON    string
+	kafka          KafkaConfig
+	eventsWriter   *kafka.Writer
+	sandboxNetwork string
+	insecure       bool
+	mu             sync.RWMutex
+	sandboxes      map[string]*Info
+	ipRegistry     map[string]string
 }
 
 func New(kafkaCfg KafkaConfig) (*Manager, error) {
@@ -104,13 +108,21 @@ func New(kafkaCfg KafkaConfig) (*Manager, error) {
 		})
 	}
 
+	sandboxNet := os.Getenv("SANDBOX_NETWORK")
+	if sandboxNet == "" {
+		sandboxNet = "sandbox_net"
+	}
+	insecure := os.Getenv("SANDBOX_INSECURE") == "true"
+
 	m := &Manager{
-		cli:          cli,
-		seccompJSON:  string(raw),
-		kafka:        kafkaCfg,
-		eventsWriter: eventsWriter,
-		sandboxes:    make(map[string]*Info),
-		ipRegistry:   make(map[string]string),
+		cli:            cli,
+		seccompJSON:    string(raw),
+		kafka:          kafkaCfg,
+		eventsWriter:   eventsWriter,
+		sandboxNetwork: sandboxNet,
+		insecure:       insecure,
+		sandboxes:      make(map[string]*Info),
+		ipRegistry:     make(map[string]string),
 	}
 
 	if err := m.ensureNetwork(context.Background()); err != nil {
@@ -139,27 +151,54 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		cfg.TimeoutS = defaultTimeoutS
 	}
 
+	// SANDBOX_INSECURE=true: strip all OCI security constraints so contestant
+	// containers start on GitHub Actions runners (which reject custom seccomp +
+	// host-network + CapDrop combinations). In production this env var is unset
+	// and all isolation layers are active.
+	insecure := m.insecure
+
+	// host network mode shares the existing host netns — no new namespace and
+	// no bind-mount. Required on CI runners where the Docker daemon cannot
+	// bind-mount netns for API-created containers.
+	useHostNet := m.sandboxNetwork == "host"
+
+	networkMode := container.NetworkMode(m.sandboxNetwork)
+
 	hostCfg := &container.HostConfig{
 		Resources: container.Resources{
 			Memory:     cfg.MemoryMB * 1024 * 1024,
 			CpusetCpus: cfg.CPUCores,
 		},
-		SecurityOpt: []string{
+		NetworkMode: networkMode,
+	}
+
+	if !insecure {
+		hostCfg.SecurityOpt = []string{
 			"no-new-privileges:true",
 			"seccomp=" + m.seccompJSON,
-		},
-		ReadonlyRootfs: true,
-		Tmpfs: map[string]string{
+		}
+		hostCfg.ReadonlyRootfs = true
+		hostCfg.Tmpfs = map[string]string{
 			"/tmp": "rw,noexec,nosuid,size=64m",
-		},
-		CapDrop:     strslice.StrSlice{"ALL"},
-		CapAdd:      strslice.StrSlice{"NET_BIND_SERVICE"},
-		NetworkMode: container.NetworkMode(sandboxNetwork),
+		}
+		hostCfg.CapDrop = strslice.StrSlice{"ALL"}
+		hostCfg.CapAdd = strslice.StrSlice{"NET_BIND_SERVICE"}
 	}
+
+	// For host-network mode, find a free port on the host and pass it to the
+	// contestant binary via LISTEN_ADDR. Named networks use the container IP.
+	containerPort := 8080
+	if useHostNet {
+		if p, err := freePort(); err == nil {
+			containerPort = p
+		}
+	}
+
+	env := append(cfg.Env, fmt.Sprintf("LISTEN_ADDR=:%d", containerPort))
 
 	containerCfg := &container.Config{
 		Image: cfg.Image,
-		Env:   cfg.Env,
+		Env:   env,
 		Labels: map[string]string{
 			"quant-titans.role":    "sandbox",
 			"quant-titans.managed": "true",
@@ -167,10 +206,14 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		},
 	}
 
-	netCfg := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			sandboxNetwork: {},
-		},
+	// host mode must not specify endpoint config.
+	var netCfg *network.NetworkingConfig
+	if !useHostNet {
+		netCfg = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				m.sandboxNetwork: {},
+			},
+		}
 	}
 
 	resp, err := m.cli.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, "")
@@ -188,9 +231,11 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		return nil, fmt.Errorf("container inspect: %w", err)
 	}
 
-	containerIP := ""
-	if net, ok := inspect.NetworkSettings.Networks[sandboxNetwork]; ok {
-		containerIP = net.IPAddress
+	containerIP := "127.0.0.1" // default for host-network mode
+	if !useHostNet {
+		if n, ok := inspect.NetworkSettings.Networks[m.sandboxNetwork]; ok {
+			containerIP = n.IPAddress
+		}
 	}
 
 	bridgeIface, _ := m.resolveBridgeIface(ctx)
@@ -203,8 +248,9 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 	info := &Info{
 		ID:           shortID,
 		SessionID:    cfg.SessionID,
+		TeamName:     cfg.TeamName,
 		Image:        cfg.Image,
-		Endpoint:     fmt.Sprintf("http://%s:8080", containerIP),
+		Endpoint:     fmt.Sprintf("http://%s:%d", containerIP, containerPort),
 		ContainerIP:  containerIP,
 		Status:       "running",
 		StartedAt:    time.Now(),
@@ -299,11 +345,11 @@ func (m *Manager) resolveBridgeIface(ctx context.Context) (string, error) {
 		return "", err
 	}
 	for _, n := range nets {
-		if n.Name == sandboxNetwork {
+		if n.Name == m.sandboxNetwork {
 			return fmt.Sprintf("br-%s", n.ID[:12]), nil
 		}
 	}
-	return "", fmt.Errorf("network %s not found", sandboxNetwork)
+	return "", fmt.Errorf("network %s not found", m.sandboxNetwork)
 }
 
 func (m *Manager) runEBPFProber(ctx context.Context, iface, sessionID, sandboxID string) {
@@ -368,11 +414,15 @@ func (m *Manager) ensureNetwork(ctx context.Context) error {
 		return err
 	}
 	for _, n := range nets {
-		if n.Name == sandboxNetwork {
-			return nil
+		if n.Name == m.sandboxNetwork {
+			return nil // already exists (either sandbox_net or a compose network)
 		}
 	}
-	_, err = m.cli.NetworkCreate(ctx, sandboxNetwork, types.NetworkCreate{
+	// Only create if it's our own managed network; never try to create bridge/host/none.
+	if m.sandboxNetwork == "bridge" || m.sandboxNetwork == "host" || m.sandboxNetwork == "none" {
+		return nil
+	}
+	_, err = m.cli.NetworkCreate(ctx, m.sandboxNetwork, types.NetworkCreate{
 		Driver: "bridge",
 		Options: map[string]string{
 			"com.docker.network.bridge.enable_icc":           "false",
@@ -405,4 +455,15 @@ func (m *Manager) enforceTimeout(ctx context.Context, containerID, shortID strin
 	bgCtx := context.Background()
 	_ = m.cli.ContainerStop(bgCtx, containerID, container.StopOptions{Timeout: &timeout})
 	_ = m.cli.ContainerRemove(bgCtx, containerID, container.RemoveOptions{Force: true})
+}
+
+// freePort asks the OS for an available TCP port by binding to :0.
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port, nil
 }

@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: leaderboard
+  namespace: {{ .Release.Namespace }}
   labels:
     app: leaderboard
 spec:
@@ -14,26 +15,45 @@ spec:
       labels:
         app: leaderboard
     spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: leaderboard
           image: "{{ .Values.image.registry }}/leaderboard:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - containerPort: 3000
+            - containerPort: 8082
+          env:
+            {{- range $k, $v := .Values.leaderboard.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: LISTEN_ADDR
+              value: ":8082"
           resources: {{ toYaml .Values.leaderboard.resources | nindent 12 }}
           livenessProbe:
-            httpGet: { path: /, port: 3000 }
+            httpGet: { path: /healthz, port: 8082 }
             initialDelaySeconds: 15
             periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8082 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: leaderboard
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # AWS NLB — lower latency than ALB for WebSocket traffic
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 spec:
   type: {{ .Values.leaderboard.service.type }}
   selector:
     app: leaderboard
   ports:
     - port: {{ .Values.leaderboard.service.port }}
-      targetPort: 3000
+      targetPort: {{ .Values.leaderboard.service.targetPort }}
+      protocol: TCP

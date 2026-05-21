@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/Quant-Titans/distributed-bench-platform/telemetry/internal/store"
 	kafka "github.com/segmentio/kafka-go"
 )
 
@@ -50,9 +51,10 @@ type Consumer struct {
 	ebpfReader    *kafka.Reader
 	eventsReader  *kafka.Reader
 	handler       Handler
+	store         *store.Store
 }
 
-func New(broker, metricsTopic, ebpfTopic, eventsTopic, groupID string, handler Handler) *Consumer {
+func New(broker, metricsTopic, ebpfTopic, eventsTopic, groupID string, handler Handler, st *store.Store) *Consumer {
 	return &Consumer{
 		metricsReader: kafka.NewReader(kafka.ReaderConfig{
 			Brokers:        []string{broker},
@@ -79,6 +81,7 @@ func New(broker, metricsTopic, ebpfTopic, eventsTopic, groupID string, handler H
 			CommitInterval: time.Second,
 		}),
 		handler: handler,
+		store:   st,
 	}
 }
 
@@ -131,6 +134,8 @@ func (c *Consumer) readMetrics(ctx context.Context) {
 	}
 }
 
+// readEBPF merges kernel-level RTT events into the metrics stream and persists
+// them to the kernel_latency hypertable.
 func (c *Consumer) readEBPF(ctx context.Context) {
 	for {
 		msg, err := c.ebpfReader.ReadMessage(ctx)
@@ -141,10 +146,28 @@ func (c *Consumer) readEBPF(ctx context.Context) {
 			SessionID string `json:"session_id"`
 			SandboxID string `json:"sandbox_id"`
 			RTTNS     uint64 `json:"rtt_ns"`
+			IngressNS uint64 `json:"ingress_ns"`
+			EgressNS  uint64 `json:"egress_ns"`
+			SrcIP     string `json:"src_ip"`
+			DstIP     string `json:"dst_ip"`
+			SrcPort   int    `json:"src_port"`
+			DstPort   int    `json:"dst_port"`
 		}
 		if err := json.Unmarshal(msg.Value, &ev); err != nil {
 			continue
 		}
+		// Persist kernel RTT to TimescaleDB (async, non-blocking)
+		c.store.WriteKernelLatency(store.KernelLatencyRow{
+			SessionID: ev.SessionID,
+			SandboxID: ev.SandboxID,
+			SrcIP:     ev.SrcIP,
+			DstIP:     ev.DstIP,
+			SrcPort:   ev.SrcPort,
+			DstPort:   ev.DstPort,
+			RTTNS:     int64(ev.RTTNS),
+			IngressNS: int64(ev.IngressNS),
+			EgressNS:  int64(ev.EgressNS),
+		})
 		_ = c.handler.Handle(ctx, []RawMetric{{
 			SessionID:   ev.SessionID,
 			SandboxID:   ev.SandboxID,

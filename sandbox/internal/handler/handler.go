@@ -9,21 +9,23 @@ import (
 )
 
 type Handler struct {
-	mgr *manager.Manager
+	mgr          *manager.Manager
+	botFleetAddr string // e.g. "http://botfleet:9091" — empty disables auto-spawn
 }
 
-func New(mgr *manager.Manager) *Handler {
-	return &Handler{mgr: mgr}
+func New(mgr *manager.Manager, botFleetAddr string) *Handler {
+	return &Handler{mgr: mgr, botFleetAddr: botFleetAddr}
 }
 
 type runRequest struct {
 	SessionID    string   `json:"session_id"`
+	TeamName     string   `json:"team_name,omitempty"`
 	Image        string   `json:"image"`
 	CPUCores     string   `json:"cpu_cores"`
 	MemoryMB     int64    `json:"memory_mb"`
 	TimeoutS     int      `json:"timeout_s"`
 	Env          []string `json:"env"`
-	ChaosEnabled bool     `json:"chaos_enabled"` // inject fault schedule after 30s baseline
+	ChaosEnabled bool     `json:"chaos_enabled"`
 }
 
 type errorResponse struct {
@@ -43,6 +45,7 @@ func (h *Handler) Run(w http.ResponseWriter, r *http.Request) {
 
 	info, err := h.mgr.Run(r.Context(), manager.Config{
 		SessionID:    req.SessionID,
+		TeamName:     req.TeamName,
 		Image:        req.Image,
 		CPUCores:     req.CPUCores,
 		MemoryMB:     req.MemoryMB,

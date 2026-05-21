@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,18 +19,20 @@ type ArchetypeMix struct {
 	NoiseTraders         int
 	InstitutionalSlicers int
 	LatencyArbs          int
+	FIXNoise             int // FIX 4.4 noise bots
 }
 
 // FleetConfig is the top-level configuration for a benchmark run.
 type FleetConfig struct {
-	FleetID     string
-	SessionID   string
-	Symbol      string
-	EndpointURL string
-	Mix         ArchetypeMix
-	TargetTPS   int
-	DurationSec int64
-	KafkaBroker string
+	FleetID      string
+	SessionID    string
+	Symbol       string
+	EndpointURL  string
+	FIXEndpoint  string // TCP addr for FIX acceptor (host:port)
+	Mix          ArchetypeMix
+	TargetTPS    int
+	DurationSec  int64
+	KafkaBroker  string
 	MetricsTopic string
 	ReplayTopic  string
 }
@@ -41,6 +44,7 @@ type Fleet struct {
 	ordersSent  atomic.Int64
 	writer      *kafka.Writer
 	replaySeq   atomic.Int64
+	httpClient  *http.Client
 }
 
 func NewFleet(cfg FleetConfig) *Fleet {
@@ -48,24 +52,42 @@ func NewFleet(cfg FleetConfig) *Fleet {
 		Brokers:      []string{cfg.KafkaBroker},
 		Balancer:     &kafka.LeastBytes{},
 		BatchTimeout: 5 * time.Millisecond,
+		BatchSize:    256, // batch up to 256 messages before flushing
+		Async:        true,
 	})
-	return &Fleet{cfg: cfg, writer: w}
+
+	// Single transport shared by every bot in this fleet.
+	// MaxConnsPerHost caps concurrent TCP connections to the contestant endpoint,
+	// providing natural backpressure without a separate semaphore.
+	transport := &http.Transport{
+		MaxIdleConns:        4096,
+		MaxIdleConnsPerHost: 1024,
+		MaxConnsPerHost:     1024,
+		IdleConnTimeout:     90 * time.Second,
+		DisableKeepAlives:   false,
+	}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: transport,
+	}
+
+	return &Fleet{cfg: cfg, writer: w, httpClient: client}
 }
 
-// Run spawns all bots, collects metrics, publishes to Kafka, and returns when
-// the fleet finishes (duration elapsed or ctx cancelled).
+// Run spawns all bots, publishes metrics to Kafka, and returns when the fleet
+// finishes (duration elapsed or ctx cancelled).
 func (f *Fleet) Run(ctx context.Context) error {
 	defer f.writer.Close()
 
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(f.cfg.DurationSec)*time.Second)
 	defer cancel()
 
-	metricsCh := make(chan Metrics, 4096)
+	// Large buffer avoids bots blocking on back-pressure during Kafka flush.
+	metricsCh := make(chan Metrics, 65536)
 
 	var wg sync.WaitGroup
 	f.spawnBots(runCtx, &wg, metricsCh)
 
-	// Drain metrics channel and publish to Kafka.
 	go f.publishMetrics(runCtx, metricsCh)
 
 	wg.Wait()
@@ -86,7 +108,13 @@ func (f *Fleet) spawnBots(ctx context.Context, wg *sync.WaitGroup, out chan<- Me
 		}()
 	}
 
-	botCfg := Config{Symbol: f.cfg.Symbol, TargetTPS: perBotTPS, SessionID: f.cfg.SessionID}
+	botCfg := Config{
+		Symbol:      f.cfg.Symbol,
+		TargetTPS:   perBotTPS,
+		SessionID:   f.cfg.SessionID,
+		HTTPClient:  f.httpClient,
+		FIXEndpoint: f.cfg.FIXEndpoint,
+	}
 	mix := f.cfg.Mix
 
 	for i := 0; i < mix.MarketMakers; i++ {
@@ -104,43 +132,74 @@ func (f *Fleet) spawnBots(ctx context.Context, wg *sync.WaitGroup, out chan<- Me
 	for i := 0; i < mix.LatencyArbs; i++ {
 		spawn(NewLatencyArbBot(botCfg))
 	}
-}
-
-func (f *Fleet) publishMetrics(ctx context.Context, ch <-chan Metrics) {
-	for m := range ch {
-		f.ordersSent.Add(1)
-		seq := f.replaySeq.Add(1)
-
-		msg, err := json.Marshal(map[string]any{
-			"session_id":  f.cfg.SessionID,
-			"fleet_id":    f.cfg.FleetID,
-			"order_id":    m.OrderID,
-			"archetype":   m.Archetype.String(),
-			"app_rtt_ns":  m.AppRTTNS,
-			"correct":     m.Correct,
-			"fill_price":  m.FillPrice,
-			"fill_qty":    m.FillQty,
-			"emitted_ns":  m.EmittedNS,
-			"replay_seq":  seq,  // monotonic sequence for deterministic replay
-		})
-		if err != nil {
-			continue
-		}
-
-		// Write to both metrics topic and replay topic simultaneously.
-		_ = f.writer.WriteMessages(ctx,
-			kafka.Message{Topic: f.cfg.MetricsTopic, Key: []byte(f.cfg.SessionID), Value: msg},
-			kafka.Message{Topic: f.cfg.ReplayTopic, Key: []byte(fmt.Sprintf("%d", seq)), Value: msg},
-		)
+	for i := 0; i < mix.FIXNoise; i++ {
+		spawn(NewFIXNoiseBot(botCfg))
 	}
 }
 
-func (f *Fleet) ActiveBots() int32    { return f.activeCount.Load() }
-func (f *Fleet) OrdersSent() int64    { return f.ordersSent.Load() }
+// publishMetrics batches metrics from the channel and writes to Kafka.
+// Up to 256 messages are batched per WriteMessages call, flushing at most
+// every 5 ms — keeping Kafka write amplification low at high TPS.
+func (f *Fleet) publishMetrics(ctx context.Context, ch <-chan Metrics) {
+	batch := make([]kafka.Message, 0, 256)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		_ = f.writer.WriteMessages(ctx, batch...)
+		batch = batch[:0]
+	}
+
+	for {
+		select {
+		case m, ok := <-ch:
+			if !ok {
+				flush()
+				return
+			}
+			f.ordersSent.Add(1)
+			seq := f.replaySeq.Add(1)
+
+			payload, err := json.Marshal(map[string]any{
+				"session_id": f.cfg.SessionID,
+				"fleet_id":   f.cfg.FleetID,
+				"order_id":   m.OrderID,
+				"archetype":  m.Archetype.String(),
+				"app_rtt_ns": m.AppRTTNS,
+				"correct":    m.Correct,
+				"fill_price": m.FillPrice,
+				"fill_qty":   m.FillQty,
+				"emitted_ns": m.EmittedNS,
+				"replay_seq": seq,
+			})
+			if err != nil {
+				continue
+			}
+
+			batch = append(batch,
+				kafka.Message{Topic: f.cfg.MetricsTopic, Key: []byte(f.cfg.SessionID), Value: payload},
+				kafka.Message{Topic: f.cfg.ReplayTopic, Key: []byte(fmt.Sprintf("%d", seq)), Value: payload},
+			)
+			if len(batch) >= 256 {
+				flush()
+			}
+
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
+func (f *Fleet) ActiveBots() int32 { return f.activeCount.Load() }
+func (f *Fleet) OrdersSent() int64 { return f.ordersSent.Load() }
 
 func (f *Fleet) totalBots() int {
 	m := f.cfg.Mix
-	return m.MarketMakers + m.MomentumTraders + m.NoiseTraders + m.InstitutionalSlicers + m.LatencyArbs
+	return m.MarketMakers + m.MomentumTraders + m.NoiseTraders +
+		m.InstitutionalSlicers + m.LatencyArbs + m.FIXNoise
 }
 
 func max(a, b int) int {

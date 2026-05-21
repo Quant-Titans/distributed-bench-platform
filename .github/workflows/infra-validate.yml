@@ -1,0 +1,64 @@
+name: Infra Validate
+
+on:
+  push:
+    branches: [main, "feat/**"]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-validate.yml"
+  pull_request:
+    paths:
+      - "infra/**"
+
+jobs:
+  terraform-validate:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.x"
+
+      - name: terraform init (no backend)
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate
+
+      - name: terraform fmt check
+        run: terraform fmt -check -recursive
+
+  helm-lint:
+    name: Helm lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: "latest"
+
+      - name: Add Redpanda repo
+        run: helm repo add redpanda https://charts.redpanda.com
+
+      - name: Helm dependency update
+        run: helm dependency update infra/helm/platform
+
+      - name: Helm lint
+        run: helm lint infra/helm/platform --strict
+
+      - name: Helm template (dry run)
+        run: |
+          helm template quant-titans infra/helm/platform \
+            --set image.tag=ci \
+            --set timescaledb.password=testpass \
+            --set ghcr_token=dummy \
+            > /dev/null
+          echo "✓ Helm template renders without errors"

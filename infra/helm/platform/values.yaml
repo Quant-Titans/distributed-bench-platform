@@ -2,23 +2,48 @@ image:
   registry: ghcr.io/quant-titans
   tag: latest
   pullPolicy: IfNotPresent
+  pullSecrets:
+    - name: ghcr-pull-secret
 
+# ── Kafka topic names (shared by all services) ───────────────────────────────
 kafka:
   broker: "quant-titans-redpanda:9092"
   topics:
-    rawMetrics: "bench.raw_metrics"
-    replayLog:  "bench.replay_log"
-    scores:     "bench.scores"
-    ebpfLatency: "telemetry.kernel_latency"
+    rawMetrics:   "bench.raw_metrics"
+    replayLog:    "bench.replay_log"
+    scores:       "bench.scores"
+    events:       "bench.events"
+    ebpfLatency:  "telemetry.kernel_latency"
 
-sandbox:
-  replicas: 3
+# ── TimescaleDB (self-hosted StatefulSet in EKS) ─────────────────────────────
+timescaledb:
+  image: timescale/timescaledb:2.15.2-pg16
+  user: quant
+  password: titans   # overridden at deploy time via --set timescaledb.password=...
+  database: metrics
+  storage: 20Gi
   resources:
-    requests: { cpu: "2", memory: "1Gi" }
-    limits:   { cpu: "4", memory: "2Gi" }
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2",    memory: "4Gi" }
+
+# ── Redis ────────────────────────────────────────────────────────────────────
+redis:
+  image: redis:7-alpine
+  storage: 5Gi
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
+# ── Sandbox Engine ────────────────────────────────────────────────────────────
+sandbox:
+  replicas: 2
+  resources:
+    requests: { cpu: "2",   memory: "1Gi" }
+    limits:   { cpu: "4",   memory: "2Gi" }
   env:
     KAFKA_BROKER: "quant-titans-redpanda:9092"
-    EBPF_TOPIC: "telemetry.kernel_latency"
+    EBPF_TOPIC:   "telemetry.kernel_latency"
+    EVENTS_TOPIC: "bench.events"
   nodeSelector:
     role: sandbox
   tolerations:
@@ -27,37 +52,73 @@ sandbox:
       value: sandbox
       effect: NoSchedule
 
+# ── Bot Fleet ─────────────────────────────────────────────────────────────────
 botfleet:
   replicas: 5
   resources:
-    requests: { cpu: "1", memory: "512Mi" }
-    limits:   { cpu: "2", memory: "1Gi" }
+    requests: { cpu: "1",    memory: "512Mi" }
+    limits:   { cpu: "4",    memory: "2Gi" }
   env:
-    KAFKA_BROKER: "quant-titans-redpanda:9092"
+    KAFKA_BROKER:   "quant-titans-redpanda:9092"
+    METRICS_TOPIC:  "bench.raw_metrics"
+    REPLAY_TOPIC:   "bench.replay_log"
+    FIX_ENDPOINT:   ""   # set to host:port when contestant exposes FIX 4.4
+  hpa:
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
 
+# ── Telemetry ─────────────────────────────────────────────────────────────────
 telemetry:
   replicas: 2
   resources:
     requests: { cpu: "500m", memory: "512Mi" }
-    limits:   { cpu: "2", memory: "2Gi" }
+    limits:   { cpu: "2",    memory: "2Gi" }
   env:
-    KAFKA_BROKER: "quant-titans-redpanda:9092"
+    KAFKA_BROKER:    "quant-titans-redpanda:9092"
+    METRICS_TOPIC:   "bench.raw_metrics"
+    EBPF_TOPIC:      "telemetry.kernel_latency"
+    EVENTS_TOPIC:    "bench.events"
+    SCORE_TOPIC:     "bench.scores"
+    CONSUMER_GROUP:  "telemetry-engine"
+    TIMESCALEDB_URL: "postgres://quant:titans@timescaledb:5432/metrics"
+    REDIS_URL:       "redis:6379"
 
+# ── Leaderboard ──────────────────────────────────────────────────────────────
 leaderboard:
   replicas: 2
   service:
     type: LoadBalancer
     port: 80
+    targetPort: 8082
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "256Mi" }
+  env:
+    KAFKA_BROKER:    "quant-titans-redpanda:9092"
+    SCORE_TOPIC:     "bench.scores"
+    CONSUMER_GROUP:  "leaderboard-ws"
+    STATIC_DIR:      "/app/dist"
 
+# ── Redpanda ──────────────────────────────────────────────────────────────────
 redpanda:
   enabled: true
   statefulset:
-    replicas: 3
+    replicas: 1   # single-node for hackathon; 3 for production
   storage:
     persistentVolume:
       size: 20Gi
   resources:
     requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2",    memory: "4Gi" }
+  config:
+    rpk:
+      additional_start_flags:
+        - "--smp=1"
+        - "--memory=1G"
+        - "--overprovisioned"
+  console:
+    ingress:
+      className: ""
+    service:
+      targetPort: 8080

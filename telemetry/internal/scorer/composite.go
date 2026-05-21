@@ -130,6 +130,29 @@ func (e *Engine) Handle(ctx context.Context, metrics []consumer.RawMetric) error
 	return nil
 }
 
+// HandleChaosEvent implements consumer.Handler — updates chaos tracking state
+// when the sandbox manager signals fault schedule start/end.
+//
+// chaos_start: captures current p99 as the clean baseline before faults.
+// chaos_end:   captures p99 under stress and records the fault window duration.
+func (e *Engine) HandleChaosEvent(_ context.Context, ev consumer.ChaosEvent) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	s := e.getOrCreateSession(ev.SessionID)
+	_, _, p99, _ := s.hdr.KernelPercentiles()
+
+	switch ev.EventType {
+	case "chaos_start":
+		s.chaosStartNS = ev.TimestampNS
+		s.baselineP99NS = p99
+	case "chaos_end":
+		s.chaosEndNS = ev.TimestampNS
+		s.chaosP99NS = p99
+	}
+	return nil
+}
+
 // Compute calculates the composite score for a session.
 func (e *Engine) Compute(sessionID string) CompositeScore {
 	e.mu.Lock()

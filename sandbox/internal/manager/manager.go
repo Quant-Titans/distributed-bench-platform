@@ -2,7 +2,9 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"sync"
@@ -13,7 +15,9 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
+	kafka "github.com/segmentio/kafka-go"
 
+	sandboxchaos "github.com/Quant-Titans/distributed-bench-platform/sandbox/internal/chaos"
 	sandboxebpf "github.com/Quant-Titans/distributed-bench-platform/sandbox/internal/ebpf"
 )
 
@@ -22,51 +26,65 @@ const (
 	defaultMemoryMB = 512
 	defaultCPUCores = "0"
 	defaultTimeoutS = 120
+	chaosBaselineS  = 30 // seconds of clean load before injecting faults
 )
 
-// KafkaConfig holds Redpanda/Kafka connection settings for eBPF event publishing.
+// KafkaConfig holds Redpanda/Kafka connection settings.
 type KafkaConfig struct {
-	Broker     string // e.g. "redpanda:9092"
-	EBPFTopic  string // e.g. "telemetry.kernel_latency"
+	Broker      string // e.g. "redpanda:9092"
+	EBPFTopic   string // e.g. "telemetry.kernel_latency"
+	EventsTopic string // e.g. "bench.events" — chaos lifecycle events
 }
 
 type Config struct {
-	Image     string   `json:"image"`
-	CPUCores  string   `json:"cpu_cores"`
-	MemoryMB  int64    `json:"memory_mb"`
-	TimeoutS  int      `json:"timeout_s"`
-	Env       []string `json:"env,omitempty"`
-	SessionID string   `json:"session_id"`
-	TeamName  string   `json:"team_name,omitempty"`
+	Image        string   `json:"image"`
+	CPUCores     string   `json:"cpu_cores"`
+	MemoryMB     int64    `json:"memory_mb"`
+	TimeoutS     int      `json:"timeout_s"`
+	Env          []string `json:"env,omitempty"`
+	SessionID    string   `json:"session_id"`
+	TeamName     string   `json:"team_name,omitempty"`
+	ChaosEnabled bool     `json:"chaos_enabled"`
 }
 
 type Info struct {
-	ID          string    `json:"id"`
-	SessionID   string    `json:"session_id"`
-	TeamName    string    `json:"team_name,omitempty"`
-	Image       string    `json:"image"`
-	Endpoint    string    `json:"endpoint"`
-	ContainerIP string    `json:"container_ip"`
-	Status      string    `json:"status"`
-	StartedAt   time.Time `json:"started_at"`
-	EBPFIface   string    `json:"ebpf_iface,omitempty"`
-	cancel      context.CancelFunc
-	proberStop  context.CancelFunc
+	ID           string    `json:"id"`
+	SessionID    string    `json:"session_id"`
+	TeamName     string    `json:"team_name,omitempty"`
+	Image        string    `json:"image"`
+	Endpoint     string    `json:"endpoint"`
+	ContainerIP  string    `json:"container_ip"`
+	Status       string    `json:"status"`
+	StartedAt    time.Time `json:"started_at"`
+	EBPFIface    string    `json:"ebpf_iface,omitempty"`
+	ChaosEnabled bool      `json:"chaos_enabled"`
+	cancel       context.CancelFunc
+	proberStop   context.CancelFunc
+	chaosStop    context.CancelFunc
+}
+
+// chaosLifecycleEvent is published to bench.events when chaos starts or ends.
+type chaosLifecycleEvent struct {
+	SessionID   string `json:"session_id"`
+	SandboxID   string `json:"sandbox_id"`
+	EventType   string `json:"event_type"` // "chaos_start" | "chaos_end"
+	FaultType   string `json:"fault_type"`
+	TimestampNS int64  `json:"timestamp_ns"`
 }
 
 type Manager struct {
 	cli            *client.Client
 	seccompJSON    string
 	kafka          KafkaConfig
-	sandboxNetwork string // "sandbox_net" (prod) or "host" (CI)
-	insecure       bool   // SANDBOX_INSECURE=true disables seccomp/caps/readonly for CI
+	eventsWriter   *kafka.Writer
+	sandboxNetwork string
+	insecure       bool
 	mu             sync.RWMutex
 	sandboxes      map[string]*Info
-	// ipRegistry maps containerIP → sandbox shortID for eBPF event annotation.
-	ipRegistry map[string]string
+	ipRegistry     map[string]string
 }
 
-func New(kafka KafkaConfig) (*Manager, error) {
+func New(kafkaCfg KafkaConfig) (*Manager, error) {
 	cli, err := client.NewClientWithOpts(
 		client.FromEnv,
 		client.WithAPIVersionNegotiation(),
@@ -80,6 +98,16 @@ func New(kafka KafkaConfig) (*Manager, error) {
 		return nil, fmt.Errorf("read seccomp profile at %s: %w", seccompPath, err)
 	}
 
+	var eventsWriter *kafka.Writer
+	if kafkaCfg.Broker != "" && kafkaCfg.EventsTopic != "" {
+		eventsWriter = kafka.NewWriter(kafka.WriterConfig{
+			Brokers:      []string{kafkaCfg.Broker},
+			Topic:        kafkaCfg.EventsTopic,
+			Balancer:     &kafka.LeastBytes{},
+			BatchTimeout: 100 * time.Millisecond,
+		})
+	}
+
 	sandboxNet := os.Getenv("SANDBOX_NETWORK")
 	if sandboxNet == "" {
 		sandboxNet = "sandbox_net"
@@ -89,7 +117,8 @@ func New(kafka KafkaConfig) (*Manager, error) {
 	m := &Manager{
 		cli:            cli,
 		seccompJSON:    string(raw),
-		kafka:          kafka,
+		kafka:          kafkaCfg,
+		eventsWriter:   eventsWriter,
 		sandboxNetwork: sandboxNet,
 		insecure:       insecure,
 		sandboxes:      make(map[string]*Info),
@@ -104,7 +133,12 @@ func New(kafka KafkaConfig) (*Manager, error) {
 	return m, nil
 }
 
-func (m *Manager) Close() { m.cli.Close() }
+func (m *Manager) Close() {
+	if m.eventsWriter != nil {
+		_ = m.eventsWriter.Close()
+	}
+	m.cli.Close()
+}
 
 func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 	if cfg.MemoryMB == 0 {
@@ -208,20 +242,23 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 
 	runCtx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutS)*time.Second)
 	proberCtx, proberCancel := context.WithCancel(context.Background())
+	chaosCtx, chaosCancel := context.WithCancel(context.Background())
 
 	shortID := resp.ID[:12]
 	info := &Info{
-		ID:          shortID,
-		SessionID:   cfg.SessionID,
-		TeamName:    cfg.TeamName,
-		Image:       cfg.Image,
-		Endpoint:    fmt.Sprintf("http://%s:%d", containerIP, containerPort),
-		ContainerIP: containerIP,
-		Status:      "running",
-		StartedAt:   time.Now(),
-		EBPFIface:   bridgeIface,
-		cancel:      cancel,
-		proberStop:  proberCancel,
+		ID:           shortID,
+		SessionID:    cfg.SessionID,
+		TeamName:     cfg.TeamName,
+		Image:        cfg.Image,
+		Endpoint:     fmt.Sprintf("http://%s:%d", containerIP, containerPort),
+		ContainerIP:  containerIP,
+		Status:       "running",
+		StartedAt:    time.Now(),
+		EBPFIface:    bridgeIface,
+		ChaosEnabled: cfg.ChaosEnabled,
+		cancel:       cancel,
+		proberStop:   proberCancel,
+		chaosStop:    chaosCancel,
 	}
 
 	m.mu.Lock()
@@ -231,9 +268,15 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 	}
 	m.mu.Unlock()
 
-	// Attach eBPF TC hook to the bridge interface — kernel-level RTT measurement.
 	if bridgeIface != "" && m.kafka.Broker != "" {
 		go m.runEBPFProber(proberCtx, bridgeIface, cfg.SessionID, shortID)
+	}
+
+	// Chaos injection: wait for baseline, then run fault schedule.
+	if cfg.ChaosEnabled && bridgeIface != "" {
+		go m.runChaos(chaosCtx, info, bridgeIface)
+	} else {
+		chaosCancel() // not needed; release immediately
 	}
 
 	go m.enforceTimeout(runCtx, resp.ID, shortID)
@@ -241,8 +284,61 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 	return info, nil
 }
 
-// resolveBridgeIface returns the host bridge interface name for sandbox_net.
-// Docker names custom network bridges "br-<network_id[:12]>".
+// runChaos waits for the baseline measurement window, then runs the default
+// fault schedule, publishing chaos_start and chaos_end events to bench.events.
+func (m *Manager) runChaos(ctx context.Context, info *Info, iface string) {
+	// Wait for baseline measurement window before injecting any faults.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(chaosBaselineS * time.Second):
+	}
+
+	log.Printf("chaos: starting fault schedule for session %s (iface=%s)", info.SessionID, iface)
+
+	m.publishChaosEvent(ctx, chaosLifecycleEvent{
+		SessionID:   info.SessionID,
+		SandboxID:   info.ID,
+		EventType:   "chaos_start",
+		FaultType:   "schedule",
+		TimestampNS: time.Now().UnixNano(),
+	})
+
+	// cgroup v2 path for CPU throttling — valid on systemd Linux hosts.
+	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/system.slice/docker-%s.scope", info.ID)
+	inj := sandboxchaos.New(iface, cgroupPath)
+
+	if _, _, err := inj.RunSchedule(ctx, sandboxchaos.DefaultFaultSchedule(), 0); err != nil {
+		log.Printf("chaos: schedule error for session %s: %v", info.SessionID, err)
+	}
+
+	m.publishChaosEvent(ctx, chaosLifecycleEvent{
+		SessionID:   info.SessionID,
+		SandboxID:   info.ID,
+		EventType:   "chaos_end",
+		FaultType:   "schedule",
+		TimestampNS: time.Now().UnixNano(),
+	})
+
+	log.Printf("chaos: completed fault schedule for session %s", info.SessionID)
+}
+
+func (m *Manager) publishChaosEvent(ctx context.Context, ev chaosLifecycleEvent) {
+	if m.eventsWriter == nil {
+		return
+	}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	if err := m.eventsWriter.WriteMessages(ctx, kafka.Message{
+		Key:   []byte(ev.SessionID),
+		Value: b,
+	}); err != nil {
+		log.Printf("chaos: publish event %s: %v", ev.EventType, err)
+	}
+}
+
 func (m *Manager) resolveBridgeIface(ctx context.Context) (string, error) {
 	nets, err := m.cli.NetworkList(ctx, types.NetworkListOptions{})
 	if err != nil {
@@ -259,7 +355,6 @@ func (m *Manager) resolveBridgeIface(ctx context.Context) (string, error) {
 func (m *Manager) runEBPFProber(ctx context.Context, iface, sessionID, sandboxID string) {
 	prober, err := sandboxebpf.NewProber(iface, sessionID, sandboxID, m.kafka.Broker, m.kafka.EBPFTopic)
 	if err != nil {
-		// eBPF unavailable (non-Linux, missing caps) — degrade gracefully.
 		return
 	}
 	_ = prober.Run(ctx)
@@ -296,6 +391,9 @@ func (m *Manager) Stop(id string) error {
 		if info.proberStop != nil {
 			info.proberStop()
 		}
+		if info.chaosStop != nil {
+			info.chaosStop()
+		}
 		if info.ContainerIP != "" {
 			delete(m.ipRegistry, info.ContainerIP)
 		}
@@ -327,7 +425,6 @@ func (m *Manager) ensureNetwork(ctx context.Context) error {
 	_, err = m.cli.NetworkCreate(ctx, m.sandboxNetwork, types.NetworkCreate{
 		Driver: "bridge",
 		Options: map[string]string{
-			// prevent sandbox containers from reaching each other
 			"com.docker.network.bridge.enable_icc":           "false",
 			"com.docker.network.bridge.enable_ip_masquerade": "true",
 		},
@@ -343,6 +440,9 @@ func (m *Manager) enforceTimeout(ctx context.Context, containerID, shortID strin
 		info.Status = "timed_out"
 		if info.proberStop != nil {
 			info.proberStop()
+		}
+		if info.chaosStop != nil {
+			info.chaosStop()
 		}
 		if info.ContainerIP != "" {
 			delete(m.ipRegistry, info.ContainerIP)

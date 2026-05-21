@@ -13,35 +13,48 @@ import (
 
 // RawMetric is the event emitted by each bot per order, deserialized from Kafka.
 type RawMetric struct {
-	SessionID  string  `json:"session_id"`
-	SandboxID  string  `json:"sandbox_id"`
-	OrderID    string  `json:"order_id"`
-	Archetype  string  `json:"archetype"`
-	AppRTTNS   int64   `json:"app_rtt_ns"`
-	KernelRTTNS int64  `json:"kernel_rtt_ns"` // populated by eBPF prober events
-	Correct    bool    `json:"correct"`
-	FillPrice  float64 `json:"fill_price"`
-	FillQty    int64   `json:"fill_qty"`
-	EmittedNS  int64   `json:"emitted_ns"`
-	ReplaySeq  int64   `json:"replay_seq"`
+	SessionID   string  `json:"session_id"`
+	SandboxID   string  `json:"sandbox_id"`
+	OrderID     string  `json:"order_id"`
+	Archetype   string  `json:"archetype"`
+	AppRTTNS    int64   `json:"app_rtt_ns"`
+	KernelRTTNS int64   `json:"kernel_rtt_ns"` // populated by eBPF prober events
+	Correct     bool    `json:"correct"`
+	FillPrice   float64 `json:"fill_price"`
+	FillQty     int64   `json:"fill_qty"`
+	EmittedNS   int64   `json:"emitted_ns"`
+	ReplaySeq   int64   `json:"replay_seq"`
 }
 
-// Handler processes a batch of metrics. Implemented by the scorer.
+// ChaosEvent is published to bench.events by the sandbox manager when a fault
+// schedule starts or ends.
+type ChaosEvent struct {
+	SessionID   string `json:"session_id"`
+	SandboxID   string `json:"sandbox_id"`
+	EventType   string `json:"event_type"`   // "chaos_start" | "chaos_end"
+	FaultType   string `json:"fault_type"`
+	TimestampNS int64  `json:"timestamp_ns"`
+}
+
+// Handler processes metrics and chaos lifecycle events. Implemented by the scorer.
 type Handler interface {
 	Handle(ctx context.Context, metrics []RawMetric) error
+	HandleChaosEvent(ctx context.Context, ev ChaosEvent) error
 }
 
-// Consumer reads from two Kafka topics:
+// Consumer reads from three Kafka topics:
 //   - MetricsTopic: bot app-layer metrics
 //   - EBPFTopic:    kernel-level RTT events from the eBPF prober
+//   - EventsTopic:  chaos lifecycle events from the sandbox manager
 type Consumer struct {
 	metricsReader *kafka.Reader
 	ebpfReader    *kafka.Reader
+	eventsReader  *kafka.Reader
 	handler       Handler
 	store         *store.Store
 }
 
-func New(broker, metricsTopic, ebpfTopic, groupID string, handler Handler, st *store.Store) *Consumer {
+func New(broker, metricsTopic, ebpfTopic, eventsTopic, groupID string, handler Handler, st *store.Store) *Consumer {
 	return &Consumer{
 		metricsReader: kafka.NewReader(kafka.ReaderConfig{
 			Brokers:        []string{broker},
@@ -59,18 +72,28 @@ func New(broker, metricsTopic, ebpfTopic, groupID string, handler Handler, st *s
 			MaxBytes:       10e6,
 			CommitInterval: time.Second,
 		}),
+		eventsReader: kafka.NewReader(kafka.ReaderConfig{
+			Brokers:        []string{broker},
+			Topic:          eventsTopic,
+			GroupID:        groupID + "-events",
+			MinBytes:       1,
+			MaxBytes:       1e6,
+			CommitInterval: time.Second,
+		}),
 		handler: handler,
 		store:   st,
 	}
 }
 
-// Run starts both reader goroutines and blocks until ctx is cancelled.
+// Run starts all reader goroutines and blocks until ctx is cancelled.
 func (c *Consumer) Run(ctx context.Context) {
 	go c.readMetrics(ctx)
 	go c.readEBPF(ctx)
+	go c.readEvents(ctx)
 	<-ctx.Done()
 	_ = c.metricsReader.Close()
 	_ = c.ebpfReader.Close()
+	_ = c.eventsReader.Close()
 }
 
 func (c *Consumer) readMetrics(ctx context.Context) {
@@ -145,11 +168,31 @@ func (c *Consumer) readEBPF(ctx context.Context) {
 			IngressNS: int64(ev.IngressNS),
 			EgressNS:  int64(ev.EgressNS),
 		})
-		// Forward kernel RTT into the scoring engine for histogram recording
 		_ = c.handler.Handle(ctx, []RawMetric{{
 			SessionID:   ev.SessionID,
 			SandboxID:   ev.SandboxID,
 			KernelRTTNS: int64(ev.RTTNS),
 		}})
+	}
+}
+
+// readEvents consumes bench.events — chaos lifecycle messages from the sandbox
+// manager — and forwards them to the scorer to update chaos tracking state.
+func (c *Consumer) readEvents(ctx context.Context) {
+	for {
+		msg, err := c.eventsReader.ReadMessage(ctx)
+		if err != nil {
+			return
+		}
+		var ev ChaosEvent
+		if err := json.Unmarshal(msg.Value, &ev); err != nil {
+			continue
+		}
+		if ev.EventType != "chaos_start" && ev.EventType != "chaos_end" {
+			continue
+		}
+		if err := c.handler.HandleChaosEvent(ctx, ev); err != nil {
+			log.Printf("chaos event handle: %v", err)
+		}
 	}
 }

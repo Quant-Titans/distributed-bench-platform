@@ -16,6 +16,7 @@ func main() {
 	broker       := envOr("KAFKA_BROKER", "redpanda:9092")
 	metricsTopic := envOr("METRICS_TOPIC", "bench.raw_metrics")
 	ebpfTopic    := envOr("EBPF_TOPIC", "telemetry.kernel_latency")
+	eventsTopic  := envOr("EVENTS_TOPIC", "bench.events")
 	scoreTopic   := envOr("SCORE_TOPIC", "bench.scores")
 	groupID      := envOr("CONSUMER_GROUP", "telemetry-engine")
 	dbDSN        := envOr("TIMESCALEDB_URL", "")
@@ -32,7 +33,7 @@ func main() {
 	}
 
 	engine := scorer.NewEngine(broker, scoreTopic, st)
-	cons   := consumer.New(broker, metricsTopic, ebpfTopic, groupID, engine, st)
+	cons   := consumer.New(broker, metricsTopic, ebpfTopic, eventsTopic, groupID, engine, st)
 
 	log.Printf("telemetry engine starting (broker=%s)", broker)
 	cons.Run(ctx)

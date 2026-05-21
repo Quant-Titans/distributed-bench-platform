@@ -15,8 +15,9 @@ import (
 
 func main() {
 	kafka := manager.KafkaConfig{
-		Broker:    envOr("KAFKA_BROKER", "redpanda:9092"),
-		EBPFTopic: envOr("EBPF_TOPIC", "telemetry.kernel_latency"),
+		Broker:      envOr("KAFKA_BROKER", "redpanda:9092"),
+		EBPFTopic:   envOr("EBPF_TOPIC", "telemetry.kernel_latency"),
+		EventsTopic: envOr("EVENTS_TOPIC", "bench.events"),
 	}
 	mgr, err := manager.New(kafka)
 	if err != nil {

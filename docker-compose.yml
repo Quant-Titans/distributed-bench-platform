@@ -34,7 +34,7 @@ services:
       - quantnet
     entrypoint: ["/bin/sh", "-c"]
     command: |
-      "rpk topic create bench.raw_metrics bench.replay_log bench.scores telemetry.kernel_latency \
+      "rpk topic create bench.raw_metrics bench.replay_log bench.scores bench.events telemetry.kernel_latency \
         --brokers redpanda:29092 \
         --partitions 4 \
         --replicas 1 || true"
@@ -87,6 +87,7 @@ services:
       LISTEN_ADDR: ":8080"
       KAFKA_BROKER: "redpanda:29092"
       EBPF_TOPIC: "telemetry.kernel_latency"
+      EVENTS_TOPIC: "bench.events"
       BOTFLEET_HTTP_ADDR: "http://botfleet:9091"
       SANDBOX_NETWORK: "host"
       SANDBOX_INSECURE: "true"
@@ -131,6 +132,7 @@ services:
       METRICS_TOPIC: "bench.raw_metrics"
       EBPF_TOPIC: "telemetry.kernel_latency"
       SCORE_TOPIC: "bench.scores"
+      EVENTS_TOPIC: "bench.events"
       CONSUMER_GROUP: "telemetry-engine"
       TIMESCALEDB_URL: "postgres://quant:titans@timescaledb:5432/metrics"
       REDIS_URL: "redis:6379"

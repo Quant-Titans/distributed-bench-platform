@@ -1158,7 +1158,8 @@ curl -X POST http://sandbox:8080/v1/sandbox/run \
 | cosign keyless image signing + SBOM + provenance | `build-push.yml` | ✅ |
 | `infra-validate.yml` — terraform fmt + helm lint | `.github/workflows/infra-validate.yml` | ✅ |
 | Competition-quality README with architecture diagram | `README.md` | ✅ |
-| `make deploy` — one-command kind cluster + Helm deploy (6 steps, ~5 min) | `Makefile`, `infra/kind/` | ✅ |
+| `make deploy` — one-command kind cluster + Helm deploy (7 steps, ~12 min) | `Makefile`, `infra/kind/` | ✅ |
+| Telemetry startup retry loop (90s exp-backoff → no manual restart needed) | `telemetry/cmd/main.go:connectStore()` | ✅ |
 | `make destroy` / `make status` / `make submission` | `Makefile` | ✅ |
 | ADR-002: eBPF TC hooks rationale | `docs/adr/002-ebpf-tc-hooks-for-latency.md` | ✅ |
 | ADR-003: Redpanda over Kafka rationale | `docs/adr/003-redpanda-over-apache-kafka.md` | ✅ |
@@ -1205,7 +1206,7 @@ Contestant           Sandbox Engine        Bot Fleet         Telemetry          
 | SSE fleet stats stream | `GET /v1/fleets/stream` on botfleet HTTP server; 1 Hz JSON events | ✅ |
 | Horizontal scaling | `botfleet` uses `expose:` not host-port binding; `docker compose up --scale botfleet=2` works | ✅ |
 | `/api/timeseries` endpoint | Leaderboard server queries TimescaleDB via `pgxpool`; column allowlist prevents SQLi | ✅ |
-| Grafana 10.4 dashboard | `infra/grafana/` — p99/TPS/score/accuracy panels + standings table; anonymous access | ✅ |
+| Grafana 10.4 dashboard | `infra/helm/platform/templates/grafana.yaml` — p99/TPS/score/accuracy panels + standings table; anonymous access; auto-provisioned TimescaleDB datasource | ✅ |
 | FIX 4.4 end-to-end | `dummy-engine` TCP acceptor; FIX endpoint auto-derived from container IP | ✅ |
 | 1000 bots per session | 6 archetypes incl. 50 FIX bots; `docker compose up --scale botfleet=N` | ✅ |
 | `CONTESTANT_GUIDE.md` | Full REST + FIX contract, seccomp constraints, scoring formula, Go example | ✅ |

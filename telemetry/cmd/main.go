@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Quant-Titans/distributed-bench-platform/telemetry/internal/consumer"
 	"github.com/Quant-Titans/distributed-bench-platform/telemetry/internal/scorer"
@@ -24,11 +25,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.New(ctx, dbDSN)
-	if err != nil {
-		log.Printf("timescaledb unavailable (%v) — running without persistence", err)
-	} else if st != nil {
-		log.Println("timescaledb connected")
+	st := connectStore(ctx, dbDSN)
+	if st != nil {
 		defer st.Close()
 	}
 
@@ -39,6 +37,36 @@ func main() {
 	cons.Run(ctx)
 	log.Println("telemetry engine stopped")
 	os.Exit(0)
+}
+
+// connectStore retries the TimescaleDB connection with exponential backoff for
+// up to 90 seconds so telemetry survives slow database startup in Kubernetes.
+func connectStore(ctx context.Context, dsn string) *store.Store {
+	if dsn == "" {
+		return nil
+	}
+	backoff := 2 * time.Second
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		st, err := store.New(ctx, dsn)
+		if err == nil {
+			log.Println("timescaledb connected")
+			return st
+		}
+		if time.Now().After(deadline) {
+			log.Printf("timescaledb unavailable after 90s (%v) — running without persistence", err)
+			return nil
+		}
+		log.Printf("timescaledb not ready (%v) — retrying in %s", err, backoff)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(backoff):
+		}
+		if backoff < 16*time.Second {
+			backoff *= 2
+		}
+	}
 }
 
 func envOr(key, fallback string) string {

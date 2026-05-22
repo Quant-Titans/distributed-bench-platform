@@ -37,25 +37,16 @@ for svc in "${SERVICES[@]}"; do
   docker build -t "${LOCAL_REGISTRY}/${svc}:latest" "${REPO_ROOT}/${svc}/"
 done
 
-# Pre-pull infrastructure images so kind nodes don't fetch from Docker Hub during Helm install
-INFRA_IMAGES=(
-  "redpandadata/redpanda:v23.3.21"
-  "timescale/timescaledb:latest-pg16"
-  "redis:7-alpine"
-)
-echo "  pre-pulling infrastructure images..."
-for img in "${INFRA_IMAGES[@]}"; do
-  docker pull "${img}" || true
-done
-
+# Load only locally-built service images; infra images (redpanda, timescaledb, redis)
+# are pulled by kubelet directly from Docker Hub — kind load fails on multi-platform
+# manifest indexes when only one platform's blobs are cached locally (Apple Silicon).
 kind load docker-image \
   "${LOCAL_REGISTRY}/sandbox:latest" \
   "${LOCAL_REGISTRY}/botfleet:latest" \
   "${LOCAL_REGISTRY}/telemetry:latest" \
   "${LOCAL_REGISTRY}/leaderboard:latest" \
-  "${INFRA_IMAGES[@]}" \
   --name "${CLUSTER_NAME}"
-echo "  ✓ images loaded"
+echo "  ✓ service images loaded (infra images pulled by kubelet on demand)"
 
 echo "==> [4/6] Adding Redpanda Helm repo..."
 helm repo add redpanda https://charts.redpanda.com 2>/dev/null || true

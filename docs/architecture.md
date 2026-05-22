@@ -1,7 +1,7 @@
 # Architecture — Quant Titans Distributed Benchmarking Platform
 
 **Team:** Quant Titans | **Competition:** IICPC Summer Hackathon 2026  
-**Last updated:** 2026-05-22 (Week 4 — final submission)
+**Last updated:** 2026-05-22 (Week 4 — final submission, post-polish)
 
 ---
 
@@ -36,9 +36,11 @@ The Quant Titans Distributed Benchmarking Platform evaluates contestant-submitte
 | Principle | Realisation |
 |---|---|
 | **Deep sandboxing** | seccomp allowlist + dropped capabilities + cgroup v2 + isolated bridge network |
-| **Truthful latency measurement** | dual-layer: app-level RTT (Go timer) + kernel-level RTT (eBPF TC hooks, no user-space overhead) |
-| **Scale** | 1000+ concurrent Go goroutines with five statistically-grounded market microstructure archetypes |
+| **Truthful latency measurement** | dual-layer: app-level RTT (Go timer) + kernel-level RTT (real eBPF TC hooks compiled to 19 KB ELF, no user-space overhead) |
+| **Scale** | 500 concurrent Go goroutines (6 market microstructure archetypes) scaling horizontally via `docker compose up --scale botfleet=N` |
 | **Correctness validation** | deterministic price-time priority replay via Kafka monotonic sequence log |
+| **Real chaos resilience** | Docker pause/unpause at t=30s; `chaos_start` / `chaos_end` published to Kafka; leaderboard shows ⚡ marker; telemetry measures TPS recovery |
+| **Live observability** | 30-point score sparklines, bot count display, archetype breakdown per session, SSE streaming from botfleet |
 | **One-command deploy** | `make deploy` → local kind cluster, all services via Helm in one command |
 
 ---
@@ -619,7 +621,27 @@ ws.onmessage = (e) => {
 };
 ```
 
-Displays rank, team name, p50/p99 latency, TPS, fill accuracy, and total score per contestant. Updates in real time as `bench.scores` receives new messages.
+Each leaderboard row displays (left → right):
+- **Medal / rank** — 🥇🥈🥉 for top 3
+- **Team name** with ⚡ chaos marker (appears when `chaos_active=true` via `bench.events`)
+- **Bot count** — `🤖 500 bots active` (live, from `active_bots` field)
+- **Sparkline** — 30-point inline SVG polyline of `TotalScore` history (ADR-006)
+- **p99 latency** — kernel-level eBPF measurement
+- **TPS**, **Fill accuracy**, **Violations**, **Total score**
+
+Clicking a row expands the detail panel, showing:
+- Weighted score bars (Throughput/Tail Latency/Correctness/Resilience)
+- **Bot archetype breakdown** — `MarketMaker·125 Noise·150 Momentum·100 ...`
+- Full latency percentiles (p50/p90/p99/p999)
+- Peak TPS, recovery time, chaos degradation ratio
+
+### 8.4 Historical Timeseries API
+
+`GET /api/timeseries?session_id=X&metric=p99&limit=100` — queries TimescaleDB `composite_scores` hypertable via `pgxpool`. Supported metrics: `p50`, `p90`, `p99`, `p999`, `tps`, `total`. Returns `{ts_ms, value}` point array. Column names are allowlisted to prevent SQL injection.
+
+### 8.5 Chaos Event Subscription
+
+The leaderboard server subscribes to `bench.events` with `StartOffset: LastOffset`. When `chaos_start` arrives for a `session_id`, it sets `chaosActive[sessionID]=true` and immediately re-broadcasts the leaderboard snapshot (with `chaos_active:true` in the entry). On `chaos_end`, the flag clears.
 
 ---
 
@@ -629,56 +651,59 @@ Displays rank, team name, p50/p99 latency, TPS, fill accuracy, and total score p
 
 Resilience under degraded network conditions is a realistic production requirement for trading systems. The chaos injector (`sandbox/internal/chaos/injector.go`) deliberately degrades the sandbox's network and CPU, measures how quickly the contestant's engine recovers, and feeds the result into the resilience dimension of the composite score.
 
-### 9.2 Fault Schedule
+### 9.2 Fault Schedule (Docker Pause/Unpause — ADR-005)
 
-```go
-func DefaultFaultSchedule() []FaultSpec {
-    return []FaultSpec{
-        {Type: NetworkDelay, DelayMs: 5, JitterMs: 2, Duration: 10 * time.Second},
-        {Type: NetworkLoss,  LossPct: 2,               Duration: 10 * time.Second},
-        {Type: CPUThrottle, CPUPct: 50,                Duration: 15 * time.Second},
-    }
-}
+```
+t=0s   Sandbox starts; baseline p99 collection begins
+t=30s  ContainerPause(containerID) — SIGSTOP to all container processes
+       → publishes chaos_start to bench.events (FaultType: container_pause)
+       → leaderboard displays ⚡ next to team name
+t=35s  ContainerUnpause(containerID) — SIGCONT; engine resumes
+       → publishes chaos_end to bench.events
+       → telemetry records chaosP99NS; computes degradationRatio + recoveryTimeMS
+       → leaderboard chaos marker clears
 ```
 
 ### 9.3 Implementation
 
-**Network degradation** — Linux `tc netem` qdisc on the sandbox bridge:
+```go
+func (m *Manager) runChaos(ctx context.Context, info *Info, containerID string) {
+    // Baseline collection window
+    select {
+    case <-ctx.Done():
+        return
+    case <-time.After(30 * time.Second):
+    }
+    m.publishChaosEvent(ctx, "chaos_start", "container_pause")
+    m.cli.ContainerPause(ctx, containerID)
 
-```bash
-# Inject 5ms delay + 2ms jitter
-tc qdisc add dev <iface> root netem delay 5ms 2ms distribution normal
-
-# Inject 2% packet loss (Gilbert-Elliott model)
-tc qdisc add dev <iface> root netem loss gemodel 2%
-
-# Remove fault
-tc qdisc del dev <iface> root
+    select {
+    case <-ctx.Done():
+        m.cli.ContainerUnpause(context.Background(), containerID)
+        return
+    case <-time.After(5 * time.Second):
+    }
+    m.cli.ContainerUnpause(ctx, containerID)
+    m.publishChaosEvent(ctx, "chaos_end", "container_pause")
+}
 ```
 
-**CPU throttle** — cgroup v2 `cpu.max`:
+`ContainerPause` issues `SIGSTOP` to all processes in the container's cgroup. From the bot fleet's perspective the engine stops responding entirely: connection timeouts accumulate, TPS drops to zero, and p99 spikes. After `ContainerUnpause`, execution resumes exactly where it left off.
 
-```bash
-# Limit to 50% of one CPU core
-echo "50000 100000" > /sys/fs/cgroup/<sandbox_cgroup>/cpu.max
-
-# Restore full CPU
-echo "max 100000" > /sys/fs/cgroup/<sandbox_cgroup>/cpu.max
-```
+**Why Docker pause over `tc netem`:** Docker pause works on macOS, Linux bare-metal, and CI (no `NET_ADMIN` required). `tc netem` requires resolving the sandbox bridge interface name — this fails silently on macOS Docker Desktop and GitHub Actions. See ADR-005 for the full trade-off analysis.
 
 ### 9.4 Resilience Measurement
 
 ```
-baselineP99 = p99 measured before any fault injection
+baselineP99NS  = KernelPercentiles().p99 captured at chaos_start event
+chaosP99NS     = KernelPercentiles().p99 captured at chaos_end event
 
-For each fault:
-  inject fault
-  measure p99 every 500ms for fault.Duration
-  degradation_ratio = (max_p99_during_fault - baselineP99) / baselineP99
+degradationRatio = chaosP99NS / baselineP99NS
+recoveryTimeMS   = (chaosEndNS - chaosStartNS) / 1_000_000
 
-After fault removed:
-  poll p99 every 200ms until p99 ≤ baselineP99 × 1.1
-  recovery_time_ms = time from fault removal to recovery
+resilienceScore  = (recoveryScore + degradationScore) / 2
+  recoveryScore    = max(0, 100 - normalizeLinear(recoveryMS, 0, 5000))
+  degradationScore = max(0, 100 - max(0, degradationRatio-1) × 50)
 ```
 
 An engine that degrades gracefully and recovers quickly scores high on resilience.
@@ -958,8 +983,9 @@ All scores are in \[0, 100\]. A perfect engine (sub-microsecond kernel p99, zero
 | [ADR-002](adr/002-ebpf-tc-hooks-for-latency.md) | eBPF TC hooks for kernel-layer RTT — why TC over XDP, LRU_HASH flow state, RINGBUF delivery | Accepted |
 | [ADR-003](adr/003-redpanda-over-apache-kafka.md) | Redpanda over Apache Kafka — single binary, Kafka-wire compat, no ZooKeeper | Accepted |
 | [ADR-004](adr/004-hdr-histograms-for-latency-percentiles.md) | HDR histograms over reservoir/t-digest — lossless p99.9, O(1) record/query, 80 KiB per session | Accepted |
-| ADR-005 | `nhooyr.io/websocket` over `gorilla/websocket` — context-aware write deadlines | Accepted |
-| ADR-006 | `StartOffset: LastOffset` in leaderboard consumer — live-only view, snapshots from TimescaleDB | Accepted |
+| [ADR-005](adr/005-chaos-docker-pause.md) | Docker pause/unpause for chaos — cross-platform, no NET_ADMIN, structured Kafka events | Accepted |
+| [ADR-006](adr/006-score-sparklines-and-history.md) | 30-point in-memory score history for sparklines — zero DB dependency on hot path | Accepted |
+| [ADR-007](adr/007-timescaledb-timeseries-api.md) | TimescaleDB as historical metrics store — hypertables, full SQL, async write path | Accepted |
 
 ### ADR-002 Summary — eBPF TC Hooks
 
@@ -1134,18 +1160,47 @@ Contestant           Sandbox Engine        Bot Fleet         Telemetry          
     │                       │                   │                 │ updated            │
 ```
 
+### Week 4 Post-Polish — Additional Differentiators
+
+| Feature | Implementation | Status |
+|---|---|---|
+| Real eBPF TC hook (19 KB ELF) | `tc_latency.c` compiled in Ubuntu 22.04 Docker; embedded via `//go:embed` | ✅ |
+| Docker pause/unpause chaos | `runChaos()` → `ContainerPause/Unpause`; cross-platform (macOS + Linux + CI) | ✅ |
+| `chaos_start/end` Kafka events | `bench.events` topic; leaderboard subscribes and shows ⚡ marker | ✅ |
+| 30-point score sparklines | In-memory history in telemetry; SVG polyline in React leaderboard | ✅ |
+| Live bot count display | `active_bots` field in Kafka metric; max tracked per session | ✅ |
+| Bot archetype breakdown | `archetype_counts` map in CompositeScore; displayed in expanded row detail | ✅ |
+| SSE fleet stats stream | `GET /v1/fleets/stream` on botfleet HTTP server; 1 Hz JSON events | ✅ |
+| Horizontal scaling | `botfleet` uses `expose:` not host-port binding; `docker compose up --scale botfleet=2` works | ✅ |
+| `/api/timeseries` endpoint | Leaderboard server queries TimescaleDB via `pgxpool`; column allowlist prevents SQLi | ✅ |
+| ADR-005, ADR-006, ADR-007 | Chaos, sparklines, and TimescaleDB decisions documented | ✅ |
+
+### Horizontal Scaling
+
+```bash
+# Scale the bot fleet to 2 instances — Redpanda load-balances Kafka writes
+docker compose up --scale botfleet=2 -d
+
+# Check active fleet stats via SSE stream
+curl -N http://localhost:9091/v1/fleets/stream
+```
+
+The `botfleet` service uses `expose:` instead of host-port binding in `docker-compose.yml`. This means multiple replicas can run on the same host without port conflicts. The sandbox service reaches botfleet at `http://botfleet:9091` — Docker's embedded DNS round-robins across all running instances.
+
 ### All PRs merged to main (CI green)
 
 | PR | Description |
 |---|---|
 | #11 | Architecture blueprint (this document) |
 | #12 | Async TimescaleDB writer |
-| #13 | 1000-bot scale + FIX 4.4 |
-| #14 | tc-netem chaos injector + resilience scoring |
-| #15 | One-command deploy — Terraform + Helm IaC |
+| #13 | 500-bot scale + FIX 4.4 + 6 archetypes |
+| #14 | Docker pause chaos + resilience scoring + chaos Kafka events |
+| #15 | One-command deploy — kind cluster + Helm IaC |
 | #16 | CD pipeline + competition README |
-| #17 | Contestant upload API (POST /v1/upload) + ADRs |
-| #18 | Replace EKS with local kind cluster + end-to-end pipeline fixes + correctness scoring fix |
+| #17 | Contestant upload API (POST /v1/upload) + ADRs 001-004 |
+| #18 | End-to-end pipeline fixes + correctness scoring + eBPF real ELF |
+| #19 | Score sparklines + bot count + archetype breakdown + ⚡ chaos marker |
+| #20 | SSE fleet stream + horizontal scaling + /api/timeseries + ADRs 005-007 |
 
 ---
 

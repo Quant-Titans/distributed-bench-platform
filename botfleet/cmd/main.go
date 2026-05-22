@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -53,6 +54,41 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	// SSE streaming endpoint — pushes active fleet stats every second.
+	// Consumers: monitoring dashboards, Grafana, or the leaderboard UI.
+	httpMux.HandleFunc("GET /v1/fleets/stream", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				stats := srv.AllFleets()
+				b, err := json.Marshal(map[string]any{
+					"ts_ms":  time.Now().UnixMilli(),
+					"fleets": stats,
+				})
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", b)
+				flusher.Flush()
+			}
+		}
+	})
+
 	httpMux.HandleFunc("POST /v1/spawn", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			SessionID   string `json:"session_id"`

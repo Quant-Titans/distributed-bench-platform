@@ -134,3 +134,27 @@ func (s *Server) FleetStatus(_ context.Context, fleetID string) (int32, int64, e
 	}
 	return af.fleet.ActiveBots(), af.fleet.OrdersSent(), nil
 }
+
+// FleetStat is a snapshot of one active fleet for SSE / monitoring.
+type FleetStat struct {
+	FleetID    string `json:"fleet_id"`
+	SessionID  string `json:"session_id"`
+	ActiveBots int32  `json:"active_bots"`
+	OrdersSent int64  `json:"orders_sent"`
+}
+
+// AllFleets returns a stats snapshot of every currently-running fleet.
+func (s *Server) AllFleets() []FleetStat {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]FleetStat, 0, len(s.fleets))
+	for id, af := range s.fleets {
+		out = append(out, FleetStat{
+			FleetID:    id,
+			SessionID:  af.fleet.SessionID(),
+			ActiveBots: af.fleet.ActiveBots(),
+			OrdersSent: af.fleet.OrdersSent(),
+		})
+	}
+	return out
+}

@@ -63,9 +63,9 @@ helm upgrade --install "${CLUSTER_NAME}" "${HELM_DIR}" \
 
 echo "==> [7/7] Creating Kafka topics with 1h retention..."
 # Wait for Redpanda broker to be ready before creating topics
-kubectl wait pod -n "${NAMESPACE}" -l app.kubernetes.io/component=redpanda \
+kubectl wait pod -n "${NAMESPACE}" -l app.kubernetes.io/name=redpanda \
   --for=condition=Ready --timeout=120s 2>/dev/null || true
-REDPANDA_POD=$(kubectl get pod -n "${NAMESPACE}" -l app.kubernetes.io/component=redpanda \
+REDPANDA_POD=$(kubectl get pod -n "${NAMESPACE}" -l app.kubernetes.io/name=redpanda \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 if [ -n "${REDPANDA_POD}" ]; then
   kubectl exec -n "${NAMESPACE}" "${REDPANDA_POD}" -c redpanda -- \

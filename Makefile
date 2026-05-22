@@ -144,7 +144,7 @@ destroy:
 
 topics:
 	@echo "Creating Kafka topics with 1h retention..."
-	@kubectl exec -n $(NAMESPACE) $(shell kubectl get pod -n $(NAMESPACE) -l app.kubernetes.io/component=redpanda -o jsonpath='{.items[0].metadata.name}') -c redpanda -- \
+	@kubectl exec -n $(NAMESPACE) $(shell kubectl get pod -n $(NAMESPACE) -l app.kubernetes.io/name=redpanda -o jsonpath='{.items[0].metadata.name}') -c redpanda -- \
 	  rpk topic create bench.raw_metrics bench.replay_log bench.scores bench.events telemetry.kernel_latency \
 	  --partitions 3 --replicas 1 \
 	  --topic-config retention.ms=3600000 \
@@ -152,11 +152,13 @@ topics:
 	@echo "✓ topics ready"
 
 # ── Live benchmark ────────────────────────────────────────────────────────────
-# Usage: make bench TEAM="Alpha" SESSION="run-1" BOTS=30 TPS=50 DURATION=120
-TEAM     ?= "Test Team"
+# Usage: make bench TEAM='"Quant Titans"' SESSION=run-1 BOTS=1000 TPS=20 DURATION=120
+# TPS is per-fleet total (not per-bot). Keep ≤50 on a local kind cluster to
+# avoid filling the Docker VM disk. 1000 bots at 20 TPS = high concurrency demo.
+TEAM     ?= '"Test Team"'
 SESSION  ?= run-1
-BOTS     ?= 30
-TPS      ?= 50
+BOTS     ?= 1000
+TPS      ?= 20
 DURATION ?= 120
 bench:
 	@echo "Spawning fleet: $(BOTS) bots @ $(TPS) TPS for $(DURATION)s → team=$(TEAM)"

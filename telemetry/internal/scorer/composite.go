@@ -47,17 +47,19 @@ type Engine struct {
 }
 
 type sessionState struct {
-	hdr       *LatencyHistogram
-	validator *Validator
-	startedAt time.Time
-	teamName   string
-	orderCount int64
-	peakTPS    float64
+	hdr          *LatencyHistogram
+	validator    *Validator
+	startedAt    time.Time
+	teamName     string
+	orderCount   int64
+	peakTPS      float64
+	correctFills int64
+	totalFills   int64
 	// Chaos resilience tracking
-	chaosStartNS    int64
-	chaosEndNS      int64
-	baselineP99NS   float64
-	chaosP99NS      float64
+	chaosStartNS  int64
+	chaosEndNS    int64
+	baselineP99NS float64
+	chaosP99NS    float64
 }
 
 func NewEngine(broker, scoreTopic string, st *store.Store) *Engine {
@@ -88,11 +90,13 @@ func (e *Engine) Handle(ctx context.Context, metrics []consumer.RawMetric) error
 		if m.KernelRTTNS > 0 {
 			s.hdr.RecordKernel(m.KernelRTTNS)
 		}
-		if m.OrderID != "" {
-			isBuy := true
-			s.validator.RecordOrder(m.OrderID, m.FillPrice, isBuy)
-			if m.FillPrice > 0 || m.FillQty > 0 {
-				s.validator.RecordFill(m.OrderID, m.FillPrice, m.FillQty)
+		// Track fill correctness from the bot's observation (m.Correct = engine
+		// responded with a valid fill). The Validator is reserved for cases where
+		// the raw-metric stream carries explicit side + order-price fields.
+		if m.FillPrice > 0 || m.FillQty > 0 {
+			s.totalFills++
+			if m.Correct {
+				s.correctFills++
 			}
 		}
 		s.orderCount++
@@ -168,7 +172,7 @@ func (e *Engine) Compute(sessionID string) CompositeScore {
 	}
 
 	p50, p90, p99, p999 := s.hdr.KernelPercentiles()
-	total, correct, violations := s.validator.Stats()
+	_, _, violations := s.validator.Stats()
 
 	elapsed := time.Since(s.startedAt).Seconds()
 	tps := 0.0
@@ -177,17 +181,21 @@ func (e *Engine) Compute(sessionID string) CompositeScore {
 	}
 
 	fillAccuracy := 0.0
-	if total > 0 {
-		fillAccuracy = float64(correct) / float64(total)
+	if s.totalFills > 0 {
+		fillAccuracy = float64(s.correctFills) / float64(s.totalFills)
 	}
 
 	// Normalize scores 0–100
-	throughputScore  := normalizeLinear(tps, 0, 50000)      // 50k TPS = 100
-	tailLatencyScore := normalizeTailLatency(p99)            // lower = better
-	correctnessScore := fillAccuracy * 100
-	if violations > 0 {
-		correctnessScore *= math.Pow(0.9, float64(violations)) // penalise per violation
+	throughputScore  := normalizeLinear(tps, 0, 50000) // 50k TPS = 100
+	tailLatencyScore := normalizeTailLatency(p99)       // lower = better
+
+	// Correctness: fill accuracy scaled by linear violation-rate penalty (max −50 pts).
+	// Linear rate avoids the exponential underflow that occurs with large violation counts.
+	violationRate := 0.0
+	if s.totalFills > 0 {
+		violationRate = math.Min(1.0, float64(violations)/float64(s.totalFills))
 	}
+	correctnessScore := fillAccuracy * 100 * (1 - violationRate*0.5)
 
 	degradationRatio := 1.0
 	recoveryTimeMS := 0.0
@@ -210,7 +218,7 @@ func (e *Engine) Compute(sessionID string) CompositeScore {
 		TPS:                 tps,
 		PeakTPS:             s.peakTPS,
 		FillAccuracy:        fillAccuracy,
-		PriceTimeViolations: violations,
+		PriceTimeViolations: int64(math.Round(violationRate * float64(s.totalFills))),
 		RecoveryTimeMS:      recoveryTimeMS,
 		DegradationRatio:    degradationRatio,
 		ThroughputScore:     throughputScore,

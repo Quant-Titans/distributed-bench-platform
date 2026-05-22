@@ -36,12 +36,14 @@ type CompositeScore struct {
 	PriceTimeViolations int64   `json:"price_time_violations"`
 	RecoveryTimeMS      float64 `json:"recovery_time_ms"`
 	DegradationRatio    float64 `json:"degradation_ratio"`
-	ThroughputScore     float64 `json:"throughput_score"`
-	TailLatencyScore    float64 `json:"tail_latency_score"`
-	CorrectnessScore    float64 `json:"correctness_score"`
-	ResilienceScore     float64 `json:"resilience_score"`
-	TotalScore          float64 `json:"total_score"`
-	ComputedAt          int64   `json:"computed_at_ns"`
+	ThroughputScore     float64   `json:"throughput_score"`
+	TailLatencyScore    float64   `json:"tail_latency_score"`
+	CorrectnessScore    float64   `json:"correctness_score"`
+	ResilienceScore     float64   `json:"resilience_score"`
+	TotalScore          float64   `json:"total_score"`
+	ActiveBots          int32     `json:"active_bots"`
+	ScoreHistory        []float64 `json:"score_history"`
+	ComputedAt          int64     `json:"computed_at_ns"`
 }
 
 type LeaderboardEntry struct {

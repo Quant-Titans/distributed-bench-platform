@@ -17,7 +17,6 @@ import (
 	"github.com/docker/docker/client"
 	kafka "github.com/segmentio/kafka-go"
 
-	sandboxchaos "github.com/Quant-Titans/distributed-bench-platform/sandbox/internal/chaos"
 	sandboxebpf "github.com/Quant-Titans/distributed-bench-platform/sandbox/internal/ebpf"
 )
 
@@ -274,9 +273,10 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 		go m.runEBPFProber(proberCtx, bridgeIface, cfg.SessionID, shortID)
 	}
 
-	// Chaos injection: wait for baseline, then run fault schedule.
-	if cfg.ChaosEnabled && bridgeIface != "" {
-		go m.runChaos(chaosCtx, info, bridgeIface)
+	// Chaos injection: wait for baseline, then pause/unpause the container.
+	// Uses Docker pause (works on all platforms) rather than tc netem.
+	if cfg.ChaosEnabled {
+		go m.runChaos(chaosCtx, info, resp.ID)
 	} else {
 		chaosCancel() // not needed; release immediately
 	}
@@ -286,43 +286,53 @@ func (m *Manager) Run(ctx context.Context, cfg Config) (*Info, error) {
 	return info, nil
 }
 
-// runChaos waits for the baseline measurement window, then runs the default
-// fault schedule, publishing chaos_start and chaos_end events to bench.events.
-func (m *Manager) runChaos(ctx context.Context, info *Info, iface string) {
-	// Wait for baseline measurement window before injecting any faults.
+// runChaos waits for the baseline measurement window, then pauses the sandbox
+// container for 5 seconds to simulate an outage, publishing chaos lifecycle
+// events to bench.events so telemetry can measure recovery time and degradation.
+//
+// Docker pause/unpause works on all platforms (macOS, Linux, CI) without
+// requiring tc netem or cgroup v2 — making this portable for judging demos.
+func (m *Manager) runChaos(ctx context.Context, info *Info, containerID string) {
 	select {
 	case <-ctx.Done():
 		return
 	case <-time.After(chaosBaselineS * time.Second):
 	}
 
-	log.Printf("chaos: starting fault schedule for session %s (iface=%s)", info.SessionID, iface)
+	log.Printf("chaos: pausing container %s for session %s", info.ID, info.SessionID)
 
 	m.publishChaosEvent(ctx, chaosLifecycleEvent{
 		SessionID:   info.SessionID,
 		SandboxID:   info.ID,
 		EventType:   "chaos_start",
-		FaultType:   "schedule",
+		FaultType:   "container_pause",
 		TimestampNS: time.Now().UnixNano(),
 	})
 
-	// cgroup v2 path for CPU throttling — valid on systemd Linux hosts.
-	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/system.slice/docker-%s.scope", info.ID)
-	inj := sandboxchaos.New(iface, cgroupPath)
+	if err := m.cli.ContainerPause(ctx, containerID); err != nil {
+		log.Printf("chaos: pause failed for session %s: %v (continuing)", info.SessionID, err)
+	}
 
-	if _, _, err := inj.RunSchedule(ctx, sandboxchaos.DefaultFaultSchedule(), 0); err != nil {
-		log.Printf("chaos: schedule error for session %s: %v", info.SessionID, err)
+	select {
+	case <-ctx.Done():
+		_ = m.cli.ContainerUnpause(context.Background(), containerID)
+		return
+	case <-time.After(5 * time.Second):
+	}
+
+	if err := m.cli.ContainerUnpause(ctx, containerID); err != nil {
+		log.Printf("chaos: unpause failed for session %s: %v", info.SessionID, err)
 	}
 
 	m.publishChaosEvent(ctx, chaosLifecycleEvent{
 		SessionID:   info.SessionID,
 		SandboxID:   info.ID,
 		EventType:   "chaos_end",
-		FaultType:   "schedule",
+		FaultType:   "container_pause",
 		TimestampNS: time.Now().UnixNano(),
 	})
 
-	log.Printf("chaos: completed fault schedule for session %s", info.SessionID)
+	log.Printf("chaos: completed for session %s — recovery now measured by telemetry", info.SessionID)
 }
 
 func (m *Manager) publishChaosEvent(ctx context.Context, ev chaosLifecycleEvent) {

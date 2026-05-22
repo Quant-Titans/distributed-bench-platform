@@ -29,12 +29,14 @@ type CompositeScore struct {
 	PriceTimeViolations int64 `json:"price_time_violations"`
 	RecoveryTimeMS     float64 `json:"recovery_time_ms"`
 	DegradationRatio   float64 `json:"degradation_ratio"`
-	ThroughputScore  float64 `json:"throughput_score"`
-	TailLatencyScore float64 `json:"tail_latency_score"`
-	CorrectnessScore float64 `json:"correctness_score"`
-	ResilienceScore  float64 `json:"resilience_score"`
-	TotalScore       float64 `json:"total_score"`
-	ComputedAt       int64   `json:"computed_at_ns"`
+	ThroughputScore  float64   `json:"throughput_score"`
+	TailLatencyScore float64   `json:"tail_latency_score"`
+	CorrectnessScore float64   `json:"correctness_score"`
+	ResilienceScore  float64   `json:"resilience_score"`
+	TotalScore       float64   `json:"total_score"`
+	ActiveBots       int32     `json:"active_bots"`
+	ScoreHistory     []float64 `json:"score_history"` // last 30 total scores for sparkline
+	ComputedAt       int64     `json:"computed_at_ns"`
 }
 
 // Engine processes raw metrics and emits composite scores to Kafka.
@@ -55,6 +57,8 @@ type sessionState struct {
 	peakTPS      float64
 	correctFills int64
 	totalFills   int64
+	maxActiveBots int32
+	scoreHistory  []float64 // last 30 total scores for sparkline
 	// Chaos resilience tracking
 	chaosStartNS  int64
 	chaosEndNS    int64
@@ -99,6 +103,9 @@ func (e *Engine) Handle(ctx context.Context, metrics []consumer.RawMetric) error
 				s.correctFills++
 			}
 		}
+		if m.ActiveBots > s.maxActiveBots {
+			s.maxActiveBots = m.ActiveBots
+		}
 		s.orderCount++
 		elapsed := time.Since(s.startedAt).Seconds()
 		if elapsed > 0 {
@@ -131,6 +138,17 @@ func (e *Engine) Handle(ctx context.Context, metrics []consumer.RawMetric) error
 		}
 		seen[m.SessionID] = struct{}{}
 		score := e.Compute(m.SessionID)
+		// Append to sparkline history (last 30 points) while holding lock
+		e.mu.Lock()
+		if s, ok := e.sessions[m.SessionID]; ok {
+			s.scoreHistory = append(s.scoreHistory, score.TotalScore)
+			if len(s.scoreHistory) > 30 {
+				s.scoreHistory = s.scoreHistory[len(s.scoreHistory)-30:]
+			}
+			score.ScoreHistory = make([]float64, len(s.scoreHistory))
+			copy(score.ScoreHistory, s.scoreHistory)
+		}
+		e.mu.Unlock()
 		if err := e.publish(ctx, score); err != nil {
 			return fmt.Errorf("publish score: %w", err)
 		}
@@ -226,6 +244,7 @@ func (e *Engine) Compute(sessionID string) CompositeScore {
 		CorrectnessScore:    correctnessScore,
 		ResilienceScore:     resilienceScore,
 		TotalScore:          total_score,
+		ActiveBots:          s.maxActiveBots,
 		ComputedAt:          time.Now().UnixNano(),
 	}
 }

@@ -81,6 +81,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := r.FormValue("timeout_s"); v != "" {
 		fmt.Sscanf(v, "%d", &timeoutS)
+	} else if v := r.FormValue("timeout"); v != "" {
+		fmt.Sscanf(v, "%d", &timeoutS)
 	}
 
 	file, header, err := r.FormFile("binary")
@@ -105,13 +107,14 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	buildMS := time.Since(buildStart).Milliseconds()
 
 	info, err := h.mgr.Run(r.Context(), manager.Config{
-		SessionID: sessionID,
-		TeamName:  teamName,
-		Image:     imageTag,
-		CPUCores:  cpuCores,
-		MemoryMB:  memoryMB,
-		TimeoutS:  timeoutS,
-		Env:       []string{"TEAM_NAME=" + teamName, "SESSION_ID=" + sessionID},
+		SessionID:    sessionID,
+		TeamName:     teamName,
+		Image:        imageTag,
+		CPUCores:     cpuCores,
+		MemoryMB:     memoryMB,
+		TimeoutS:     timeoutS,
+		ChaosEnabled: true,
+		Env:          []string{"TEAM_NAME=" + teamName, "SESSION_ID=" + sessionID},
 	})
 	if err != nil {
 		log.Printf("upload: run sandbox %s: %v", imageTag, err)

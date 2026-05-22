@@ -89,3 +89,24 @@ struct __sk_buff {
     __u8  tstamp_type;
     __u32 hwtstamp;
 };
+
+/* UAPI network typedefs — used by bpf_helper_defs.h */
+typedef __u16 __be16;
+typedef __u32 __be32;
+typedef __u64 __be64;
+typedef __u32 __wsum;
+typedef __u16 __le16;
+typedef __u32 __le32;
+
+/* BPF map types — subset needed by tc_latency.c */
+#define BPF_MAP_TYPE_LRU_HASH   9
+#define BPF_MAP_TYPE_RINGBUF    27
+
+/* BPF map update flags */
+#define BPF_ANY     0
+#define BPF_NOEXIST 1
+#define BPF_EXIST   2
+
+/* Compiler attributes */
+#define __always_inline inline __attribute__((always_inline))
+#define __noinline      __attribute__((noinline))

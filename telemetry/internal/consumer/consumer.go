@@ -25,6 +25,7 @@ type RawMetric struct {
 	FillQty     int64   `json:"fill_qty"`
 	EmittedNS   int64   `json:"emitted_ns"`
 	ReplaySeq   int64   `json:"replay_seq"`
+	ActiveBots  int32   `json:"active_bots"` // concurrent bots in the fleet at emit time
 }
 
 // ChaosEvent is published to bench.events by the sandbox manager when a fault

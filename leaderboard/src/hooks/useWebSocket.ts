@@ -19,6 +19,8 @@ export interface LeaderboardEntry {
   correctness_score: number
   resilience_score: number
   total_score: number
+  active_bots: number
+  score_history: number[]
   computed_at_ns: number
 }
 

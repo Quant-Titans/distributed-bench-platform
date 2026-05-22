@@ -184,17 +184,18 @@ func (f *Fleet) publishMetrics(ctx context.Context, ch <-chan Metrics) {
 			seq := f.replaySeq.Add(1)
 
 			payload, err := json.Marshal(map[string]any{
-				"session_id": f.cfg.SessionID,
-				"team_name":  f.cfg.TeamName,
-				"fleet_id":   f.cfg.FleetID,
-				"order_id":   m.OrderID,
-				"archetype":  m.Archetype.String(),
-				"app_rtt_ns": m.AppRTTNS,
-				"correct":    m.Correct,
-				"fill_price": m.FillPrice,
-				"fill_qty":   m.FillQty,
-				"emitted_ns": m.EmittedNS,
-				"replay_seq": seq,
+				"session_id":  f.cfg.SessionID,
+				"team_name":   f.cfg.TeamName,
+				"fleet_id":    f.cfg.FleetID,
+				"order_id":    m.OrderID,
+				"archetype":   m.Archetype.String(),
+				"app_rtt_ns":  m.AppRTTNS,
+				"correct":     m.Correct,
+				"fill_price":  m.FillPrice,
+				"fill_qty":    m.FillQty,
+				"emitted_ns":  m.EmittedNS,
+				"replay_seq":  seq,
+				"active_bots": f.activeCount.Load(),
 			})
 			if err != nil {
 				continue

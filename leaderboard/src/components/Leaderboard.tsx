@@ -2,6 +2,33 @@ import React, { useState } from 'react'
 import { LeaderboardEntry } from '../hooks/useWebSocket'
 import { ScoreBar } from './ScoreBar'
 
+// Inline SVG sparkline from an array of values (last N total scores).
+const Sparkline: React.FC<{ data: number[]; width?: number; height?: number }> = ({
+  data, width = 80, height = 28,
+}) => {
+  if (!data || data.length < 2) return <span style={{ color: '#333', fontSize: 11 }}>—</span>
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width
+    const y = height - ((v - min) / range) * (height - 4) - 2
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return (
+    <svg width={width} height={height} style={{ display: 'block' }}>
+      <polyline points={pts} fill="none" stroke="#00d4ff" strokeWidth={1.5} strokeLinejoin="round" />
+      {/* last point dot */}
+      {(() => {
+        const last = data[data.length - 1]
+        const x = width
+        const y = height - ((last - min) / range) * (height - 4) - 2
+        return <circle cx={x} cy={y} r={2} fill="#00d4ff" />
+      })()}
+    </svg>
+  )
+}
+
 interface Props {
   entries: LeaderboardEntry[]
   lastUpdated: Date | null
@@ -74,9 +101,19 @@ export const Leaderboard: React.FC<Props> = ({ entries, lastUpdated }) => {
             transition: 'border-color 0.2s'
           }}>
           {/* Row summary */}
-          <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 80px 80px 90px 90px 80px', gap: 12, alignItems: 'center' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 90px 80px 80px 90px 90px 80px', gap: 12, alignItems: 'center' }}>
             <span style={{ fontSize: 20 }}>{MEDAL[e.rank - 1] ?? `#${e.rank}`}</span>
-            <span style={{ fontWeight: 700, fontSize: 15 }}>{e.team_name || e.session_id.slice(0, 12)}</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{e.team_name || e.session_id.slice(0, 12)}</div>
+              {e.active_bots > 0 && (
+                <div style={{ fontSize: 10, color: '#00d4ff88', marginTop: 2 }}>
+                  🤖 {e.active_bots} bots active
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+              <Sparkline data={e.score_history ?? []} />
+            </div>
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 11, color: '#555' }}>p99</div>
               <div style={{ color: '#7c3aed', fontSize: 13 }}>{fmtNS(e.p99_ns)}</div>

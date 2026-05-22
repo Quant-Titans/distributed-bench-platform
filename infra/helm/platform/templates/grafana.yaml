@@ -1,0 +1,290 @@
+{{- if .Values.grafana.enabled }}
+# ── Grafana ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning-datasources
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: grafana
+data:
+  timescaledb.yml: |
+    apiVersion: 1
+    datasources:
+      - name: TimescaleDB
+        type: postgres
+        uid: timescaledb
+        url: timescaledb:5432
+        user: {{ .Values.timescaledb.user }}
+        secureJsonData:
+          password: {{ .Values.timescaledb.password }}
+        jsonData:
+          database: {{ .Values.timescaledb.database }}
+          sslmode: disable
+          postgresVersion: 1600
+          timescaledb: true
+        isDefault: true
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning-dashboards
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: grafana
+data:
+  default.yml: |
+    apiVersion: 1
+    providers:
+      - name: quant-titans
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /etc/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: grafana
+data:
+  quant-titans.json: |
+    {
+      "__inputs": [],
+      "__requires": [
+        {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.4.0"},
+        {"type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0"}
+      ],
+      "annotations": {"list": []},
+      "description": "Quant Titans — Distributed Bench Platform live metrics",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": {"type": "postgres", "uid": "timescaledb"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"lineWidth": 2, "fillOpacity": 10},
+              "unit": "ns"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "id": 1,
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "list", "placement": "bottom"}},
+          "targets": [
+            {
+              "datasource": {"type": "postgres", "uid": "timescaledb"},
+              "format": "time_series",
+              "rawQuery": true,
+              "rawSql": "SELECT time, team_name AS metric, p99_ns AS value\nFROM composite_scores\nWHERE $__timeFilter(time)\nORDER BY time",
+              "refId": "A"
+            }
+          ],
+          "title": "p99 Kernel Latency (ns) — by team",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "postgres", "uid": "timescaledb"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"lineWidth": 2, "fillOpacity": 10},
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "id": 2,
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "list", "placement": "bottom"}},
+          "targets": [
+            {
+              "datasource": {"type": "postgres", "uid": "timescaledb"},
+              "format": "time_series",
+              "rawQuery": true,
+              "rawSql": "SELECT time, team_name AS metric, tps AS value\nFROM composite_scores\nWHERE $__timeFilter(time)\nORDER BY time",
+              "refId": "A"
+            }
+          ],
+          "title": "Throughput (TPS) — by team",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "postgres", "uid": "timescaledb"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"lineWidth": 2, "fillOpacity": 15},
+              "min": 0,
+              "max": 100,
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "id": 3,
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "list", "placement": "bottom"}},
+          "targets": [
+            {
+              "datasource": {"type": "postgres", "uid": "timescaledb"},
+              "format": "time_series",
+              "rawQuery": true,
+              "rawSql": "SELECT time, team_name AS metric, total_score AS value\nFROM composite_scores\nWHERE $__timeFilter(time)\nORDER BY time",
+              "refId": "A"
+            }
+          ],
+          "title": "Composite Score (0–100) — by team",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "postgres", "uid": "timescaledb"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"lineWidth": 2, "fillOpacity": 10},
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "id": 4,
+          "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "list", "placement": "bottom"}},
+          "targets": [
+            {
+              "datasource": {"type": "postgres", "uid": "timescaledb"},
+              "format": "time_series",
+              "rawQuery": true,
+              "rawSql": "SELECT time, team_name AS metric, fill_accuracy AS value\nFROM composite_scores\nWHERE $__timeFilter(time)\nORDER BY time",
+              "refId": "A"
+            }
+          ],
+          "title": "Fill Accuracy — by team",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "postgres", "uid": "timescaledb"},
+          "fieldConfig": {
+            "defaults": {"unit": "short"},
+            "overrides": [
+              {"matcher": {"id": "byName", "options": "p99_ns"}, "properties": [{"id": "unit", "value": "ns"}, {"id": "displayName", "value": "p99 Latency"}]},
+              {"matcher": {"id": "byName", "options": "tps"}, "properties": [{"id": "unit", "value": "reqps"}, {"id": "displayName", "value": "TPS"}]},
+              {"matcher": {"id": "byName", "options": "total_score"}, "properties": [{"id": "displayName", "value": "Score"}]},
+              {"matcher": {"id": "byName", "options": "fill_accuracy"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "displayName", "value": "Fill Accuracy"}]},
+              {"matcher": {"id": "byName", "options": "price_time_violations"}, "properties": [{"id": "displayName", "value": "Violations"}]}
+            ]
+          },
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+          "id": 5,
+          "options": {"sortBy": [{"displayName": "Score", "desc": true}]},
+          "targets": [
+            {
+              "datasource": {"type": "postgres", "uid": "timescaledb"},
+              "format": "table",
+              "rawQuery": true,
+              "rawSql": "SELECT DISTINCT ON (session_id)\n  team_name, p99_ns, tps, fill_accuracy, price_time_violations,\n  recovery_time_ms, total_score\nFROM composite_scores\nORDER BY session_id, time DESC",
+              "refId": "A"
+            }
+          ],
+          "title": "Current Standings (latest score per team)",
+          "type": "table"
+        }
+      ],
+      "refresh": "5s",
+      "schemaVersion": 39,
+      "tags": ["iicpc", "trading", "benchmark"],
+      "time": {"from": "now-5m", "to": "now"},
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Quant Titans — Live Benchmark",
+      "uid": "quant-titans-bench",
+      "version": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: {{ .Values.grafana.image }}
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "quanttitans"
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_NAME
+              value: "Main Org."
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: "Viewer"
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: "true"
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: "/etc/grafana/dashboards/quant-titans.json"
+          volumeMounts:
+            - name: provisioning-datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: provisioning-dashboards
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /etc/grafana/dashboards
+          resources:
+            requests:
+              cpu: {{ .Values.grafana.resources.requests.cpu }}
+              memory: {{ .Values.grafana.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.grafana.resources.limits.cpu }}
+              memory: {{ .Values.grafana.resources.limits.memory }}
+      volumes:
+        - name: provisioning-datasources
+          configMap:
+            name: grafana-provisioning-datasources
+        - name: provisioning-dashboards
+          configMap:
+            name: grafana-provisioning-dashboards
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: grafana
+spec:
+  selector:
+    app: grafana
+  type: {{ .Values.grafana.service.type }}
+  ports:
+    - port: 3000
+      targetPort: 3000
+      {{- if eq .Values.grafana.service.type "NodePort" }}
+      nodePort: {{ .Values.grafana.service.nodePort }}
+      {{- end }}
+{{- end }}

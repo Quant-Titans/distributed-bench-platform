@@ -92,3 +92,11 @@ redpanda:
       additional_start_flags:
         - "--smp=1"
         - "--overprovisioned"
+
+grafana:
+  service:
+    type: NodePort
+    nodePort: 30300
+  resources:
+    requests: { cpu: "50m",  memory: "64Mi" }
+    limits:   { cpu: "200m", memory: "128Mi" }

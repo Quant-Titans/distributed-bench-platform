@@ -14,6 +14,9 @@ nodes:
       - containerPort: 30091   # botfleet gRPC
         hostPort: 9091
         protocol: TCP
+      - containerPort: 30300   # Grafana
+        hostPort: 3000
+        protocol: TCP
   - role: worker   # general-1
     image: kindest/node:v1.32.2
   - role: worker   # general-2

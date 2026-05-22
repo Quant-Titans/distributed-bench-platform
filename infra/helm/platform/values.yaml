@@ -122,3 +122,13 @@ redpanda:
       className: ""
     service:
       targetPort: 8080
+
+# ── Grafana ───────────────────────────────────────────────────────────────────
+grafana:
+  enabled: true
+  image: grafana/grafana:10.4.0
+  service:
+    type: ClusterIP
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "256Mi" }

@@ -25,6 +25,8 @@ spec:
           ports:
             - containerPort: 9090
               name: grpc
+            - containerPort: 9091
+              name: http
           env:
             {{- range $k, $v := .Values.botfleet.env }}
             - name: {{ $k }}
@@ -34,11 +36,11 @@ spec:
               value: ":9090"
           resources: {{ toYaml .Values.botfleet.resources | nindent 12 }}
           livenessProbe:
-            grpc: { port: 9090 }
+            httpGet: { path: /healthz, port: 9091 }
             initialDelaySeconds: 10
             periodSeconds: 15
           readinessProbe:
-            grpc: { port: 9090 }
+            httpGet: { path: /healthz, port: 9091 }
             initialDelaySeconds: 5
             periodSeconds: 10
 ---

@@ -57,3 +57,6 @@ spec:
     - port: {{ .Values.leaderboard.service.port }}
       targetPort: {{ .Values.leaderboard.service.targetPort }}
       protocol: TCP
+      {{- if .Values.leaderboard.service.nodePort }}
+      nodePort: {{ .Values.leaderboard.service.nodePort }}
+      {{- end }}

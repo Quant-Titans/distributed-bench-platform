@@ -16,6 +16,7 @@ import (
 // inside this package for flexibility; the handler layer translates).
 type SpawnFleetRequest struct {
 	SessionID   string
+	TeamName    string
 	EndpointURL string
 	FIXEndpoint string // TCP addr for FIX 4.4 acceptor (optional)
 	Symbol      string
@@ -66,6 +67,7 @@ func (s *Server) SpawnFleet(ctx context.Context, req SpawnFleetRequest) (*SpawnF
 	cfg := s.baseCfg
 	cfg.FleetID = fleetID
 	cfg.SessionID = req.SessionID
+	cfg.TeamName = req.TeamName
 	cfg.Symbol = req.Symbol
 	cfg.EndpointURL = req.EndpointURL
 	cfg.FIXEndpoint = req.FIXEndpoint

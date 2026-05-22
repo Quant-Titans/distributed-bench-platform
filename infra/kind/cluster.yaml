@@ -1,0 +1,18 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: quant-titans
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080   # sandbox API
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 30082   # leaderboard UI
+        hostPort: 8082
+        protocol: TCP
+      - containerPort: 30091   # botfleet gRPC
+        hostPort: 9091
+        protocol: TCP
+  - role: worker   # general-1
+  - role: worker   # general-2
+  - role: worker   # sandbox

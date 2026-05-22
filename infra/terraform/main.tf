@@ -116,10 +116,10 @@ module "eks" {
   eks_managed_node_groups = {
     # CPU-pinned worker nodes for sandbox execution (NET_ADMIN for eBPF TC hooks)
     sandbox = {
-      instance_types = ["c6i.2xlarge"]
+      instance_types = ["t3.xlarge"]
       min_size       = 1
-      max_size       = 6
-      desired_size   = 2
+      max_size       = 3
+      desired_size   = 1
       labels         = { role = "sandbox" }
       taints = [
         {
@@ -132,10 +132,10 @@ module "eks" {
 
     # General purpose nodes for botfleet, telemetry, data stores, redpanda
     general = {
-      instance_types = ["m6i.xlarge"]
-      min_size       = 2
-      max_size       = 8
-      desired_size   = 3
+      instance_types = ["t3.large"]
+      min_size       = 1
+      max_size       = 4
+      desired_size   = 2
       labels         = { role = "general" }
     }
   }

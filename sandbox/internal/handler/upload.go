@@ -123,7 +123,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	// Kick off bot fleet asynchronously — sandbox response returns immediately.
 	if h.botFleetAddr != "" {
-		go h.spawnFleet(info.Endpoint, sessionID, int64(timeoutS))
+		go h.spawnFleet(info.Endpoint, sessionID, teamName, int64(timeoutS))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -220,15 +220,16 @@ func makeBuildContext(engineBytes []byte) (*bytes.Reader, error) {
 
 // spawnFleet fires a POST to the botfleet HTTP API after a short delay to let
 // the contestant container start accepting connections.
-func (h *Handler) spawnFleet(endpointURL, sessionID string, durationSec int64) {
+func (h *Handler) spawnFleet(endpointURL, sessionID, teamName string, durationSec int64) {
 	time.Sleep(3 * time.Second)
 
 	payload, _ := json.Marshal(map[string]any{
-		"session_id":   sessionID,
-		"endpoint_url": endpointURL,
-		"symbol":       "AAPL",
-		"bot_count":    200,
-		"target_tps":   1000,
+		"session_id":    sessionID,
+		"team_name":     teamName,
+		"endpoint_url":  endpointURL,
+		"symbol":        "AAPL",
+		"bot_count":     200,
+		"target_tps":    1000,
 		"duration_secs": durationSec,
 	})
 

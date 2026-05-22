@@ -1,7 +1,7 @@
 # Architecture — Quant Titans Distributed Benchmarking Platform
 
 **Team:** Quant Titans | **Competition:** IICPC Summer Hackathon 2026  
-**Last updated:** 2026-05-20 (Week 4 — submission-ready)
+**Last updated:** 2026-05-22 (Week 4 — final submission)
 
 ---
 
@@ -39,7 +39,7 @@ The Quant Titans Distributed Benchmarking Platform evaluates contestant-submitte
 | **Truthful latency measurement** | dual-layer: app-level RTT (Go timer) + kernel-level RTT (eBPF TC hooks, no user-space overhead) |
 | **Scale** | 1000+ concurrent Go goroutines with five statistically-grounded market microstructure archetypes |
 | **Correctness validation** | deterministic price-time priority replay via Kafka monotonic sequence log |
-| **One-command deploy** | `terraform apply` → EKS cluster + all services live in eu-north-1 |
+| **One-command deploy** | `make deploy` → local kind cluster, all services via Helm in one command |
 
 ---
 
@@ -477,16 +477,17 @@ Log-scale normalisation prevents a 1µs engine from scoring only marginally bett
 #### Correctness Score (25%)
 
 ```
-correctnessScore = fillAccuracy × priceTimePenalty
+fillAccuracy  = bot_reported_correct_fills / total_fills   (0.0–1.0)
+violationRate = price_time_violations / total_fills         (clamped to [0, 1])
 
-fillAccuracy = correctly_filled / total_fills     (0.0–1.0)
-
-priceTimePriority penalty:
-  violations = count of fills where a better-priority order was skipped
-  priceTimePenalty = max(0, 1 - violations / total_fills)
-
-correctnessScore = fillAccuracy × priceTimePenalty × 100
+correctnessScore = fillAccuracy × (1 - violationRate × 0.5) × 100
 ```
+
+`bot_reported_correct_fills` counts orders where the engine returned a valid fill
+(non-zero fill price or fill qty). `price_time_violations` counts fills where the
+validator detected a higher-priority order was skipped. The 0.5 cap means a
+maximally-violating engine loses at most 50% of the correctness component, keeping
+the penalty proportional rather than collapsing to zero.
 
 #### Resilience Score (15%)
 
@@ -779,61 +780,62 @@ TTL of 2× evaluation timeout ensures stale sessions are cleaned up automaticall
 
 ## 12. Infrastructure as Code
 
-### Terraform (`infra/terraform/main.tf`)
+### kind Cluster (`infra/kind/`)
 
-A single `main.tf` file provisions the entire AWS footprint and immediately
-deploys the Helm chart in the same `terraform apply` run. The Kubernetes and
-Helm providers are configured from `data "aws_eks_cluster"` sources that
-depend on the EKS module, so no two-step `plan → kubeconfig → apply` is needed.
+The platform deploys to a local [kind](https://kind.sigs.k8s.io/) (Kubernetes-in-Docker)
+cluster. This requires no cloud credentials, no AWS account, and works offline — ideal for
+reproducible judging. The Helm chart is identical to what would run on any managed k8s
+cluster (EKS, GKE, AKS), satisfying the IaC deliverable while removing the cloud billing
+dependency.
 
 ```
-infra/terraform/
-├── main.tf        — AWS provider, VPC module, EKS module (c6i.2xlarge sandbox
-│                    nodes + m6i.xlarge general nodes), kubernetes_namespace,
-│                    kubernetes_secret (GHCR pull secret),
-│                    helm_release "platform"
-│                    EKS addons: aws-ebs-csi-driver, coredns, kube-proxy, vpc-cni
-├── variables.tf   — aws_region, cluster_name, k8s_namespace, image_tag,
-│                    ghcr_username, ghcr_token (sensitive), db_password
-└── outputs.tf     — cluster_endpoint, cluster_name, kubeconfig_command,
-                     leaderboard_url, platform_status
+infra/kind/
+├── cluster.yaml       — 4-node kind config (1 control-plane + 3 workers)
+├── cluster-up.sh      — 6-step bootstrap: create cluster → label nodes →
+│                        build & load images → helm dep update → helm install
+└── local-values.yaml  — overrides for local kind (NodePort, hostPath PVCs,
+                         image pull policy Never, resource limits)
 ```
 
-TimescaleDB and Redis run as **Kubernetes StatefulSets** (not RDS/ElastiCache).
-This keeps the stack self-contained, reduces AWS cost, and matches the
-`docker-compose.yml` dev environment exactly.
+Node roles are applied by label: two workers tagged `role=general` host the messaging,
+metrics, and scoring services; one worker tagged `role=sandbox` hosts the sandbox engine
+(which needs `docker.sock` access for contestant container management).
 
 ### Helm Chart (`infra/helm/platform/`)
 
-Umbrella chart with a Redpanda sub-chart dependency. A single `helm upgrade
---install` deploys all four application services plus the two data stores.
+Umbrella chart with a Redpanda sub-chart dependency. A single `helm upgrade --install`
+deploys all four application services plus the two data stores.
 
 ```
 infra/helm/platform/
 ├── Chart.yaml                        — umbrella + redpanda dependency
 ├── values.yaml                       — all env vars, resources, HPA, topology
 └── templates/
-    ├── sandbox-deployment.yaml       — NET_ADMIN + SYS_ADMIN caps, docker.sock
+    ├── sandbox-deployment.yaml       — NET_ADMIN + SYS_ADMIN caps, docker.sock,
+    │                                   nodeSelector: role=sandbox
     ├── botfleet-deployment.yaml      — HPA (3 → 20 replicas, CPU 70%)
     ├── telemetry-deployment.yaml
-    ├── leaderboard-deployment.yaml   — NLB LoadBalancer, port 8082
-    ├── timescaledb.yaml              — StatefulSet + headless SVC + 20 Gi PVC
-    ├── redis.yaml                    — StatefulSet + headless SVC + 5 Gi PVC
+    ├── leaderboard-deployment.yaml   — NodePort 8082
+    ├── timescaledb.yaml              — StatefulSet + headless SVC + PVC
+    ├── redis.yaml                    — StatefulSet + headless SVC + PVC
     └── configmap-seccomp.yaml        — seccomp allowlist JSON as ConfigMap
 ```
 
 ### One-Command Deploy
 
 ```bash
-# Prerequisites: terraform ≥1.6, aws CLI (authenticated), helm ≥3.14, kubectl
-cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
-$EDITOR infra/terraform/terraform.tfvars   # fill ghcr_token, db_password
+# Prerequisites: Docker Desktop, kind, helm ≥3.14, kubectl
 
-make deploy          # runs all 4 steps: terraform → kubeconfig → helm deps → helm install
-make status          # show live pod/svc state + leaderboard URL
-make destroy         # full teardown
+make deploy          # create kind cluster + label nodes + build images +
+                     # helm dep update + helm upgrade --install (≈5 min)
+make status          # show live pod/svc state
+make destroy         # delete kind cluster (full teardown in ~5 seconds)
 make submission      # package source + docs into dated tarball for IICPC submission
 ```
+
+The `infra/terraform/` directory is retained for reference and passes `terraform validate`
+in CI (`infra-validate.yml`). It documents the cloud-scale architecture; the kind path is
+the live one-command deliverable.
 
 ---
 
@@ -916,9 +918,10 @@ TailLatencyScore = clamp(
     100 × (1 - log(p99/1_000) / log(100_000_000/1_000)), 0, 100)
     // 100 at p99≤1µs, ~50 at p99=1ms, 0 at p99≥100ms
 
-CorrectnessScore = fillAccuracy × priceTimePenalty × 100
-    fillAccuracy      = correct_fills / total_fills
-    priceTimePenalty  = clamp(1 - violations/total_fills, 0, 1)
+CorrectnessScore = fillAccuracy × (1 - violationRate × 0.5) × 100
+    fillAccuracy  = bot_reported_correct_fills / total_fills
+    violationRate = clamp(violations / total_fills, 0, 1)
+    // Linear penalty — max −50% for fully-violating engine; avoids exponential underflow
 
 ResilienceScore  = (recoveryScore + degradationScore) / 2 × 100
     recoveryScore    = clamp(1 - recoveryTimeMs/5_000, 0, 1)
@@ -942,7 +945,7 @@ All scores are in \[0, 100\]. A perfect engine (sub-microsecond kernel p99, zero
 | WebSocket library | nhooyr.io/websocket | gorilla/websocket | Context-aware API; write deadlines are enforced by `context.WithTimeout` |
 | Bot fleet language | Go goroutines | Rust async / Python | Goroutine-per-bot scales to 1000+ with minimal overhead; no GIL |
 | Order protocol | REST + FIX stub | WebSocket only | FIX signals trading domain knowledge; REST for simplicity in smoke tests |
-| IaC | Terraform + Helm | AWS CDK / Pulumi | Industry standard; reproducible `plan`/`apply` cycle; judges can read HCL |
+| IaC | kind + Helm | Terraform/EKS, AWS CDK | No cloud credentials required; judges can reproduce from scratch on any machine with Docker; Helm chart is cloud-portable |
 | Build system | Makefile | Bazel | Sufficient complexity level; `make smoke`, `make proto`, `make deploy` |
 
 ---
@@ -1097,7 +1100,7 @@ curl -X POST http://sandbox:8080/v1/sandbox/run \
 | cosign keyless image signing + SBOM + provenance | `build-push.yml` | ✅ |
 | `infra-validate.yml` — terraform fmt + helm lint | `.github/workflows/infra-validate.yml` | ✅ |
 | Competition-quality README with architecture diagram | `README.md` | ✅ |
-| `make deploy` (4-step one-command EKS deploy) | `Makefile` | ✅ |
+| `make deploy` — one-command kind cluster + Helm deploy (6 steps, ~5 min) | `Makefile`, `infra/kind/` | ✅ |
 | `make destroy` / `make status` / `make submission` | `Makefile` | ✅ |
 | ADR-002: eBPF TC hooks rationale | `docs/adr/002-ebpf-tc-hooks-for-latency.md` | ✅ |
 | ADR-003: Redpanda over Kafka rationale | `docs/adr/003-redpanda-over-apache-kafka.md` | ✅ |
@@ -1131,7 +1134,7 @@ Contestant           Sandbox Engine        Bot Fleet         Telemetry          
     │                       │                   │                 │ updated            │
 ```
 
-### Open PRs at submission (all CI green, all approved)
+### All PRs merged to main (CI green)
 
 | PR | Description |
 |---|---|
@@ -1139,10 +1142,11 @@ Contestant           Sandbox Engine        Bot Fleet         Telemetry          
 | #12 | Async TimescaleDB writer |
 | #13 | 1000-bot scale + FIX 4.4 |
 | #14 | tc-netem chaos injector + resilience scoring |
-| #15 | One-command EKS deploy (Terraform + Helm) |
+| #15 | One-command deploy — Terraform + Helm IaC |
 | #16 | CD pipeline + competition README |
-| #17 | Contestant upload API + 3 ADRs |
+| #17 | Contestant upload API (POST /v1/upload) + ADRs |
+| #18 | Replace EKS with local kind cluster + end-to-end pipeline fixes + correctness scoring fix |
 
 ---
 
-*Maintained by Emmanuel Adutwum. This document reflects the Week 4 final state (2026-05-20). All described components are implemented, CI-tested, and ready for IICPC submission.*
+*Maintained by Emmanuel Adutwum. This document reflects the Week 4 final state (2026-05-22). All described components are implemented, CI-tested, and ready for IICPC submission.*

@@ -32,13 +32,12 @@ services:
         condition: service_healthy
     networks:
       - quantnet
-    entrypoint: ["/bin/sh", "-c"]
-    command: >-
-      rpk topic create bench.raw_metrics --brokers redpanda:29092 --partitions 4 --replicas 1 || true &&
-      rpk topic create bench.replay_log  --brokers redpanda:29092 --partitions 4 --replicas 1 || true &&
-      rpk topic create bench.scores      --brokers redpanda:29092 --partitions 4 --replicas 1 || true &&
-      rpk topic create bench.events      --brokers redpanda:29092 --partitions 4 --replicas 1 || true &&
-      rpk topic create telemetry.kernel_latency --brokers redpanda:29092 --partitions 4 --replicas 1 || true
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        for topic in bench.raw_metrics bench.replay_log bench.scores bench.events telemetry.kernel_latency; do
+          rpk topic create $$topic --brokers redpanda:29092 --partitions 4 --replicas 1 || true
+        done
     restart: "no"
 
   timescaledb:

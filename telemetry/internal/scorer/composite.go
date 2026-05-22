@@ -33,10 +33,11 @@ type CompositeScore struct {
 	TailLatencyScore float64   `json:"tail_latency_score"`
 	CorrectnessScore float64   `json:"correctness_score"`
 	ResilienceScore  float64   `json:"resilience_score"`
-	TotalScore       float64   `json:"total_score"`
-	ActiveBots       int32     `json:"active_bots"`
-	ScoreHistory     []float64 `json:"score_history"` // last 30 total scores for sparkline
-	ComputedAt       int64     `json:"computed_at_ns"`
+	TotalScore       float64          `json:"total_score"`
+	ActiveBots       int32            `json:"active_bots"`
+	ScoreHistory     []float64        `json:"score_history"`
+	ArchetypeCounts  map[string]int32 `json:"archetype_counts"`
+	ComputedAt       int64            `json:"computed_at_ns"`
 }
 
 // Engine processes raw metrics and emits composite scores to Kafka.
@@ -57,8 +58,9 @@ type sessionState struct {
 	peakTPS      float64
 	correctFills int64
 	totalFills   int64
-	maxActiveBots int32
-	scoreHistory  []float64 // last 30 total scores for sparkline
+	maxActiveBots  int32
+	scoreHistory   []float64        // last 30 total scores for sparkline
+	archetypeCounts map[string]int32 // order count per bot archetype
 	// Chaos resilience tracking
 	chaosStartNS  int64
 	chaosEndNS    int64
@@ -105,6 +107,12 @@ func (e *Engine) Handle(ctx context.Context, metrics []consumer.RawMetric) error
 		}
 		if m.ActiveBots > s.maxActiveBots {
 			s.maxActiveBots = m.ActiveBots
+		}
+		if m.Archetype != "" {
+			if s.archetypeCounts == nil {
+				s.archetypeCounts = make(map[string]int32)
+			}
+			s.archetypeCounts[m.Archetype]++
 		}
 		s.orderCount++
 		elapsed := time.Since(s.startedAt).Seconds()
@@ -245,6 +253,11 @@ func (e *Engine) Compute(sessionID string) CompositeScore {
 		ResilienceScore:     resilienceScore,
 		TotalScore:          total_score,
 		ActiveBots:          s.maxActiveBots,
+		ArchetypeCounts:     func() map[string]int32 {
+			cp := make(map[string]int32, len(s.archetypeCounts))
+			for k, v := range s.archetypeCounts { cp[k] = v }
+			return cp
+		}(),
 		ComputedAt:          time.Now().UnixNano(),
 	}
 }

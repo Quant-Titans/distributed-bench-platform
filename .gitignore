@@ -50,3 +50,6 @@ telemetry/bin/
 
 # Submission packages
 dist/
+
+# Helm chart dependencies (downloaded by helm dep update)
+infra/helm/platform/charts/

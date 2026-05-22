@@ -231,7 +231,7 @@ func (h *Handler) spawnFleet(endpointURL, sessionID, teamName string, durationSe
 		"team_name":     teamName,
 		"endpoint_url":  endpointURL,
 		"symbol":        "AAPL",
-		"bot_count":     200,
+		"bot_count":     500,
 		"target_tps":    1000,
 		"duration_secs": durationSec,
 	})

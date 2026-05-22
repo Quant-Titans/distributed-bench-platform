@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 
 export interface LeaderboardEntry {
   rank: number
+  chaos_active: boolean
   team_name: string
   session_id: string
   p50_ns: number
@@ -21,6 +22,7 @@ export interface LeaderboardEntry {
   total_score: number
   active_bots: number
   score_history: number[]
+  archetype_counts: Record<string, number>
   computed_at_ns: number
 }
 

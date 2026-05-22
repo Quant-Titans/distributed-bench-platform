@@ -215,8 +215,9 @@ func (f *Fleet) publishMetrics(ctx context.Context, ch <-chan Metrics) {
 	}
 }
 
-func (f *Fleet) ActiveBots() int32 { return f.activeCount.Load() }
-func (f *Fleet) OrdersSent() int64 { return f.ordersSent.Load() }
+func (f *Fleet) ActiveBots() int32  { return f.activeCount.Load() }
+func (f *Fleet) OrdersSent() int64  { return f.ordersSent.Load() }
+func (f *Fleet) SessionID() string  { return f.cfg.SessionID }
 
 func (f *Fleet) totalBots() int {
 	m := f.cfg.Mix

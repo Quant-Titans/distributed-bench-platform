@@ -104,7 +104,10 @@ export const Leaderboard: React.FC<Props> = ({ entries, lastUpdated }) => {
           <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 90px 80px 80px 90px 90px 80px', gap: 12, alignItems: 'center' }}>
             <span style={{ fontSize: 20 }}>{MEDAL[e.rank - 1] ?? `#${e.rank}`}</span>
             <div>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>{e.team_name || e.session_id.slice(0, 12)}</div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>
+                {e.chaos_active && <span title="Chaos fault active" style={{ marginRight: 4 }}>⚡</span>}
+                {e.team_name || e.session_id.slice(0, 12)}
+              </div>
               {e.active_bots > 0 && (
                 <div style={{ fontSize: 10, color: '#00d4ff88', marginTop: 2 }}>
                   🤖 {e.active_bots} bots active
@@ -153,6 +156,31 @@ export const Leaderboard: React.FC<Props> = ({ entries, lastUpdated }) => {
                   <ScoreBar label="Tail Latency" value={e.tail_latency_score} color="#7c3aed" weight="30%" />
                   <ScoreBar label="Correctness"  value={e.correctness_score}  color="#16a34a" weight="25%" />
                   <ScoreBar label="Resilience"   value={e.resilience_score}   color="#ea580c" weight="15%" />
+
+                  {/* Bot archetype breakdown */}
+                  {e.archetype_counts && Object.keys(e.archetype_counts).length > 0 && (
+                    <div style={{ marginTop: 14 }}>
+                      <div style={{ fontSize: 11, color: '#555', marginBottom: 6, letterSpacing: 1 }}>BOT ARCHETYPES</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {Object.entries(e.archetype_counts)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([archetype, count]) => (
+                          <span key={archetype} style={{
+                            background: '#0d0d1a',
+                            border: '1px solid #1e1e3a',
+                            borderRadius: 4,
+                            padding: '2px 7px',
+                            fontSize: 10,
+                            color: '#888',
+                          }}>
+                            <span style={{ color: '#c0c0c0', fontWeight: 600 }}>{archetype}</span>
+                            <span style={{ color: '#444', margin: '0 2px' }}>·</span>
+                            <span style={{ color: '#00d4ff' }}>{count.toLocaleString()}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {/* Latency details */}
                 <div>
@@ -177,7 +205,9 @@ export const Leaderboard: React.FC<Props> = ({ entries, lastUpdated }) => {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
                       <span style={{ color: '#555' }}>Recovery time</span>
-                      <span style={{ color: '#ea580c' }}>{e.recovery_time_ms.toFixed(0)}ms</span>
+                      <span style={{ color: e.chaos_active ? '#f59e0b' : '#ea580c' }}>
+                        {e.chaos_active ? '⚡ fault active' : `${e.recovery_time_ms.toFixed(0)}ms`}
+                      </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                       <span style={{ color: '#555' }}>Chaos degradation</span>

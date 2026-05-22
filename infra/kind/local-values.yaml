@@ -28,7 +28,7 @@ sandbox:
     requests: { cpu: "250m", memory: "256Mi" }
     limits:   { cpu: "1",    memory: "512Mi" }
   env:
-    KAFKA_BROKER:     "quant-titans-redpanda:9092"
+    KAFKA_BROKER:     "quant-titans-0.quant-titans:9093"
     EBPF_TOPIC:       "telemetry.kernel_latency"
     EVENTS_TOPIC:     "bench.events"
     SANDBOX_INSECURE: "true"   # disables eBPF + seccomp for local kind (no Linux kernel access)
@@ -45,12 +45,18 @@ botfleet:
     minReplicas: 1
     maxReplicas: 3
     targetCPUUtilizationPercentage: 70
+  env:
+    KAFKA_BROKER: "quant-titans-0.quant-titans:9093"
 
 telemetry:
   replicas: 1
   resources:
     requests: { cpu: "200m", memory: "128Mi" }
     limits:   { cpu: "1",    memory: "512Mi" }
+  env:
+    KAFKA_BROKER:    "quant-titans-0.quant-titans:9093"
+    TIMESCALEDB_URL: "postgres://quant:titans@timescaledb:5432/metrics"
+    REDIS_URL:       "redis:6379"
 
 leaderboard:
   replicas: 1
@@ -62,6 +68,12 @@ leaderboard:
   resources:
     requests: { cpu: "50m",  memory: "64Mi" }
     limits:   { cpu: "200m", memory: "128Mi" }
+  env:
+    KAFKA_BROKER:    "quant-titans-0.quant-titans:9093"
+    SCORE_TOPIC:     "bench.scores"
+    CONSUMER_GROUP:  "leaderboard-ws"
+    STATIC_DIR:      "/app/dist"
+    TIMESCALE_DSN:   "postgres://quant:titans@timescaledb:5432/metrics"
 
 redpanda:
   tls:

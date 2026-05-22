@@ -61,13 +61,39 @@ helm upgrade --install "${CLUSTER_NAME}" "${HELM_DIR}" \
   -f "${VALUES_FILE}" \
   --wait --timeout 20m
 
+echo "==> [7/7] Creating Kafka topics with 1h retention..."
+# Wait for Redpanda broker to be ready before creating topics
+kubectl wait pod -n "${NAMESPACE}" -l app.kubernetes.io/component=redpanda \
+  --for=condition=Ready --timeout=120s 2>/dev/null || true
+REDPANDA_POD=$(kubectl get pod -n "${NAMESPACE}" -l app.kubernetes.io/component=redpanda \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+if [ -n "${REDPANDA_POD}" ]; then
+  kubectl exec -n "${NAMESPACE}" "${REDPANDA_POD}" -c redpanda -- \
+    rpk topic create \
+      bench.raw_metrics \
+      bench.replay_log \
+      bench.scores \
+      bench.events \
+      telemetry.kernel_latency \
+      --partitions 3 --replicas 1 \
+      --topic-config retention.ms=3600000 \
+      --topic-config segment.bytes=67108864 2>/dev/null || true
+  echo "  ✓ topics created (1h retention, 64MB segments)"
+else
+  echo "  ⚠ Redpanda pod not found — create topics manually with: make topics"
+fi
+
 echo ""
 echo "════════════════════════════════════════════════"
 echo "  ✓ Platform live on kind cluster"
 echo ""
 echo "  Leaderboard  → http://localhost:8082"
 echo "  Sandbox API  → http://localhost:8080"
-echo "  Botfleet     → http://localhost:9091"
+echo "  Grafana      → http://localhost:3000"
+echo ""
+echo "  Run a benchmark:"
+echo "  kubectl port-forward -n ${NAMESPACE} deploy/botfleet 9091:9091 &"
+echo "  curl -X POST http://localhost:9091/v1/spawn -d '{\"session_id\":\"run-1\",\"team_name\":\"Your Team\",\"endpoint_url\":\"http://dummy-engine.${NAMESPACE}.svc.cluster.local:9000\",\"bot_count\":30,\"target_tps\":50,\"duration_secs\":120}'"
 echo ""
 echo "  kubectl get pods -n ${NAMESPACE}"
 echo "════════════════════════════════════════════════"

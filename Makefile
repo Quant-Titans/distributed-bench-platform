@@ -142,6 +142,30 @@ destroy:
 	kind delete cluster --name $(KIND_CLUSTER) 2>/dev/null || true
 	@echo "✓ kind cluster '$(KIND_CLUSTER)' deleted."
 
+topics:
+	@echo "Creating Kafka topics with 1h retention..."
+	@kubectl exec -n $(NAMESPACE) $(shell kubectl get pod -n $(NAMESPACE) -l app.kubernetes.io/component=redpanda -o jsonpath='{.items[0].metadata.name}') -c redpanda -- \
+	  rpk topic create bench.raw_metrics bench.replay_log bench.scores bench.events telemetry.kernel_latency \
+	  --partitions 3 --replicas 1 \
+	  --topic-config retention.ms=3600000 \
+	  --topic-config segment.bytes=67108864 2>/dev/null || true
+	@echo "✓ topics ready"
+
+# ── Live benchmark ────────────────────────────────────────────────────────────
+# Usage: make bench TEAM="Alpha" SESSION="run-1" BOTS=30 TPS=50 DURATION=120
+TEAM     ?= "Test Team"
+SESSION  ?= run-1
+BOTS     ?= 30
+TPS      ?= 50
+DURATION ?= 120
+bench:
+	@echo "Spawning fleet: $(BOTS) bots @ $(TPS) TPS for $(DURATION)s → team=$(TEAM)"
+	@kubectl port-forward -n $(NAMESPACE) deploy/botfleet 9091:9091 &>/tmp/botfleet-pf.log & sleep 2
+	@curl -sf -X POST http://localhost:9091/v1/spawn \
+	  -H "Content-Type: application/json" \
+	  -d "{\"session_id\":\"$(SESSION)\",\"team_name\":$(TEAM),\"endpoint_url\":\"http://dummy-engine.$(NAMESPACE).svc.cluster.local:9000\",\"symbol\":\"AAPL\",\"bot_count\":$(BOTS),\"target_tps\":$(TPS),\"duration_secs\":$(DURATION)}" \
+	  | python3 -m json.tool
+
 status:
 	@echo "── Nodes ─────────────────────────────────────────────────────────"
 	@kubectl get nodes -L role

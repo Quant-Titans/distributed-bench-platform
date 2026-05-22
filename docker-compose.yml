@@ -177,7 +177,9 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: "quanttitans"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_NAME: "Main Org."
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/etc/grafana/dashboards/quant-titans.json"
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro

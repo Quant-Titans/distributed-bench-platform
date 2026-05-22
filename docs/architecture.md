@@ -37,7 +37,7 @@ The Quant Titans Distributed Benchmarking Platform evaluates contestant-submitte
 |---|---|
 | **Deep sandboxing** | seccomp allowlist + dropped capabilities + cgroup v2 + isolated bridge network |
 | **Truthful latency measurement** | dual-layer: app-level RTT (Go timer) + kernel-level RTT (real eBPF TC hooks compiled to 19 KB ELF, no user-space overhead) |
-| **Scale** | 500 concurrent Go goroutines (6 market microstructure archetypes) scaling horizontally via `docker compose up --scale botfleet=N` |
+| **Scale** | 1000 concurrent Go goroutines per session (6 market microstructure archetypes) scaling horizontally via `docker compose up --scale botfleet=N` |
 | **Correctness validation** | deterministic price-time priority replay via Kafka monotonic sequence log |
 | **Real chaos resilience** | Docker pause/unpause at t=30s; `chaos_start` / `chaos_end` published to Kafka; leaderboard shows ⚡ marker; telemetry measures TPS recovery |
 | **Live observability** | 30-point score sparklines, bot count display, archetype breakdown per session, SSE streaming from botfleet |
@@ -402,7 +402,23 @@ for {
 
 The aggressor that stresses raw throughput (peak TPS). Also validates that the engine handles order bursts without dropping messages or corrupting state.
 
-#### 6.2.5 Noise Trader
+#### 6.2.5 FIX Noise Bot — End-to-End FIX 4.4
+
+Sends random Limit/Market orders via FIX 4.4 TCP (5% of fleet = 50 bots per 1000-bot run). Connects to the contestant engine's FIX acceptor at `containerIP:8443`:
+
+```
+Bot                     Contestant Engine
+ │── Logon (35=A) ─────►│
+ │◄─ Logon (35=A) ───────│
+ │── NOS (35=D) ─────────►│  New Order Single
+ │◄─ ExecReport (35=8) ───│  fill_price + fill_qty
+```
+
+RTT is measured from NOS send to matching ExecReport receipt. Falls back to REST transparently if FIX port is unavailable (backward compatible). The sandbox derives the FIX endpoint automatically: `host(endpoint_url) + ":8443"`.
+
+**CONTESTANT_GUIDE.md** documents the full wire format, required tags, and session flow so contestant teams can implement a compliant FIX acceptor.
+
+#### 6.2.6 Noise Trader
 
 Sends random limit orders at random prices and quantities:
 
@@ -642,6 +658,22 @@ Clicking a row expands the detail panel, showing:
 ### 8.5 Chaos Event Subscription
 
 The leaderboard server subscribes to `bench.events` with `StartOffset: LastOffset`. When `chaos_start` arrives for a `session_id`, it sets `chaosActive[sessionID]=true` and immediately re-broadcasts the leaderboard snapshot (with `chaos_active:true` in the entry). On `chaos_end`, the flag clears.
+
+### 8.6 Grafana Dashboard (`infra/grafana/`)
+
+A pre-provisioned Grafana 10.4 instance runs on port 3000 alongside the platform. It connects directly to TimescaleDB via the PostgreSQL datasource plugin and auto-loads the "Quant Titans — Live Benchmark" dashboard on startup.
+
+**Panels (5s auto-refresh):**
+
+| Panel | Query | Unit |
+|---|---|---|
+| p99 Kernel Latency — by team | `composite_scores.p99_ns` time-series | ns |
+| Throughput (TPS) — by team | `composite_scores.tps` time-series | req/s |
+| Composite Score (0–100) — by team | `composite_scores.total_score` time-series | score |
+| Fill Accuracy — by team | `composite_scores.fill_accuracy` time-series | % |
+| Current Standings | `DISTINCT ON (session_id)` latest row per team | table |
+
+Anonymous viewer access is enabled (`GF_AUTH_ANONYMOUS_ENABLED=true`, login form disabled) — judges can open `http://localhost:3000` without credentials.
 
 ---
 
@@ -1015,7 +1047,7 @@ All scores are in \[0, 100\]. A perfect engine (sub-microsecond kernel p99, zero
 
 | Component | Target | Notes |
 |---|---|---|
-| Bot Fleet | 10,000 orders/sec | 1000 bots × 10 orders/sec each |
+| Bot Fleet | 10,000 orders/sec | 1000 bots × 10 orders/sec each (6 archetypes incl. FIX 4.4) |
 | Redpanda | 500,000 msg/sec | Far above our requirements |
 | Telemetry ingestion | 10,000 metrics/sec | One goroutine per Kafka partition |
 | HDR histogram insert | O(1), ~50ns | No locking on hot path |
@@ -1152,8 +1184,8 @@ Contestant           Sandbox Engine        Bot Fleet         Telemetry          
     │                       │ (kernel RTT)      │──bench.raw_metrics──────────────────►│
     │                       │──telemetry.kernel_latency──────────►│                    │
     │                       │                   │                 │ score computed      │
-    │                       │ tc netem chaos     │                 │ (4 dimensions)     │
-    │                       │ (after 30s base-   │                 │──bench.scores──────►│
+    │                       │ ContainerPause t=30│                 │ (4 dimensions)     │
+    │                       │ ContainerUnpause   │                 │──bench.scores──────►│
     │                       │  line window)      │                 │                    │ WebSocket
     │                       │                   │──bench.events──►│                    │ push to
     │                       │                   │ chaos_start/end │ resilience score   │ browsers
@@ -1173,6 +1205,10 @@ Contestant           Sandbox Engine        Bot Fleet         Telemetry          
 | SSE fleet stats stream | `GET /v1/fleets/stream` on botfleet HTTP server; 1 Hz JSON events | ✅ |
 | Horizontal scaling | `botfleet` uses `expose:` not host-port binding; `docker compose up --scale botfleet=2` works | ✅ |
 | `/api/timeseries` endpoint | Leaderboard server queries TimescaleDB via `pgxpool`; column allowlist prevents SQLi | ✅ |
+| Grafana 10.4 dashboard | `infra/grafana/` — p99/TPS/score/accuracy panels + standings table; anonymous access | ✅ |
+| FIX 4.4 end-to-end | `dummy-engine` TCP acceptor; FIX endpoint auto-derived from container IP | ✅ |
+| 1000 bots per session | 6 archetypes incl. 50 FIX bots; `docker compose up --scale botfleet=N` | ✅ |
+| `CONTESTANT_GUIDE.md` | Full REST + FIX contract, seccomp constraints, scoring formula, Go example | ✅ |
 | ADR-005, ADR-006, ADR-007 | Chaos, sparklines, and TimescaleDB decisions documented | ✅ |
 
 ### Horizontal Scaling

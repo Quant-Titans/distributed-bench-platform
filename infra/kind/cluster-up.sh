@@ -36,11 +36,24 @@ for svc in "${SERVICES[@]}"; do
   echo "  building ${LOCAL_REGISTRY}/${svc}:latest ..."
   docker build -t "${LOCAL_REGISTRY}/${svc}:latest" "${REPO_ROOT}/${svc}/"
 done
+
+# Pre-pull infrastructure images so kind nodes don't fetch from Docker Hub during Helm install
+INFRA_IMAGES=(
+  "redpandadata/redpanda:v23.3.21"
+  "timescale/timescaledb:latest-pg16"
+  "redis:7-alpine"
+)
+echo "  pre-pulling infrastructure images..."
+for img in "${INFRA_IMAGES[@]}"; do
+  docker pull "${img}" || true
+done
+
 kind load docker-image \
   "${LOCAL_REGISTRY}/sandbox:latest" \
   "${LOCAL_REGISTRY}/botfleet:latest" \
   "${LOCAL_REGISTRY}/telemetry:latest" \
   "${LOCAL_REGISTRY}/leaderboard:latest" \
+  "${INFRA_IMAGES[@]}" \
   --name "${CLUSTER_NAME}"
 echo "  ✓ images loaded"
 
@@ -55,7 +68,7 @@ echo "==> [6/6] Deploying platform (namespace: ${NAMESPACE})..."
 helm upgrade --install "${CLUSTER_NAME}" "${HELM_DIR}" \
   --namespace "${NAMESPACE}" --create-namespace \
   -f "${VALUES_FILE}" \
-  --wait --timeout 10m
+  --wait --timeout 20m
 
 echo ""
 echo "════════════════════════════════════════════════"

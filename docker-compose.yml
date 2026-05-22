@@ -168,16 +168,41 @@ services:
       timeout: 5s
       retries: 5
 
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports:
+      - "3000:3000"
+    networks:
+      - quantnet
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "quanttitans"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/etc/grafana/dashboards/quant-titans.json"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── Smoke-test dummy matching engine ─────────────────────────────────────
   # NOT a contestant submission — used for local end-to-end testing only.
   dummy-engine:
     build: ./dummy-engine
     ports:
       - "9000:9000"
+      - "8443:8443"   # FIX 4.4 acceptor
     networks:
       - quantnet
     environment:
       LISTEN_ADDR: ":9000"
+      FIX_ADDR: ":8443"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9000/healthz || exit 1"]
       interval: 5s

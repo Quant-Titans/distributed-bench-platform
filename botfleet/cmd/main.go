@@ -94,6 +94,7 @@ func main() {
 			SessionID   string `json:"session_id"`
 			TeamName    string `json:"team_name"`
 			EndpointURL string `json:"endpoint_url"`
+			FIXEndpoint string `json:"fix_endpoint"`
 			Symbol      string `json:"symbol"`
 			BotCount    int32  `json:"bot_count"`
 			TargetTPS   int32  `json:"target_tps"`
@@ -119,6 +120,7 @@ func main() {
 			SessionID:   req.SessionID,
 			TeamName:    req.TeamName,
 			EndpointURL: req.EndpointURL,
+			FIXEndpoint: req.FIXEndpoint,
 			Symbol:      req.Symbol,
 			BotCount:    req.BotCount,
 			TargetTPS:   req.TargetTPS,

@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -34,6 +36,7 @@ RUN apk add --no-cache ca-certificates libstdc++ libc6-compat
 COPY engine /engine
 RUN chmod +x /engine
 EXPOSE 8080
+EXPOSE 8443
 ENTRYPOINT ["/engine"]
 `
 
@@ -126,7 +129,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	// Kick off bot fleet asynchronously — sandbox response returns immediately.
 	if h.botFleetAddr != "" {
-		go h.spawnFleet(info.Endpoint, sessionID, teamName, int64(timeoutS))
+		fixEndpoint := deriveFIXEndpoint(info.Endpoint)
+		go h.spawnFleet(info.Endpoint, fixEndpoint, sessionID, teamName, int64(timeoutS))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -221,17 +225,32 @@ func makeBuildContext(engineBytes []byte) (*bytes.Reader, error) {
 	return bytes.NewReader(buf.Bytes()), nil
 }
 
+// deriveFIXEndpoint extracts the host from an HTTP endpoint URL and appends
+// the standard FIX 4.4 acceptor port (8443), e.g. "http://172.20.0.5:8080" → "172.20.0.5:8443".
+func deriveFIXEndpoint(httpEndpoint string) string {
+	u, err := url.Parse(httpEndpoint)
+	if err != nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		host = u.Host
+	}
+	return host + ":8443"
+}
+
 // spawnFleet fires a POST to the botfleet HTTP API after a short delay to let
 // the contestant container start accepting connections.
-func (h *Handler) spawnFleet(endpointURL, sessionID, teamName string, durationSec int64) {
+func (h *Handler) spawnFleet(endpointURL, fixEndpoint, sessionID, teamName string, durationSec int64) {
 	time.Sleep(3 * time.Second)
 
 	payload, _ := json.Marshal(map[string]any{
 		"session_id":    sessionID,
 		"team_name":     teamName,
 		"endpoint_url":  endpointURL,
+		"fix_endpoint":  fixEndpoint,
 		"symbol":        "AAPL",
-		"bot_count":     500,
+		"bot_count":     1000,
 		"target_tps":    1000,
 		"duration_secs": durationSec,
 	})

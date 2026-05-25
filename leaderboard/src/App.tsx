@@ -1,7 +1,8 @@
 import { useWebSocket } from './hooks/useWebSocket'
 import { Leaderboard } from './components/Leaderboard'
 
-const WS_URL = (import.meta as { env?: { VITE_WS_URL?: string } }).env?.VITE_WS_URL ?? 'ws://localhost:8082/ws/leaderboard'
+const WS_URL = (import.meta as { env?: { VITE_WS_URL?: string } }).env?.VITE_WS_URL ??
+  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/leaderboard`
 
 export default function App() {
   const { entries, connState, lastUpdated } = useWebSocket(WS_URL)

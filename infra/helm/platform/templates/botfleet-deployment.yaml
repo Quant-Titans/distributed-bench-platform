@@ -50,12 +50,17 @@ metadata:
   name: botfleet
   namespace: {{ .Release.Namespace }}
 spec:
+  type: NodePort
   selector:
     app: botfleet
   ports:
     - port: 9090
       targetPort: 9090
       name: grpc
+    - port: 9091
+      targetPort: 9091
+      nodePort: 30091
+      name: http
 ---
 {{- if .Values.botfleet.hpa }}
 apiVersion: autoscaling/v2

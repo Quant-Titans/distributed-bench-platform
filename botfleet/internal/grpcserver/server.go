@@ -76,18 +76,18 @@ func (s *Server) SpawnFleet(ctx context.Context, req SpawnFleetRequest) (*SpawnF
 	cfg.Mix = req.Mix
 
 	if cfg.Mix == (worker.ArchetypeMix{}) {
-		// Default 1000-bot mix when caller does not specify per-archetype counts.
-		// Percentages: 25% MM, 20% Momentum, 30% Noise, 10% Slicer, 10% LatArb, 5% FIX
+		// Default mix — LatencyArb excluded: it has no rate limiter and floods Kafka.
+		// Percentages: 30% MM, 25% Momentum, 30% Noise, 10% Slicer, 5% FIX
 		total := int(req.BotCount)
 		if total <= 0 {
 			total = 1000
 		}
 		cfg.Mix = worker.ArchetypeMix{
-			MarketMakers:         total * 25 / 100,
-			MomentumTraders:      total * 20 / 100,
+			MarketMakers:         total * 30 / 100,
+			MomentumTraders:      total * 25 / 100,
 			NoiseTraders:         total * 30 / 100,
 			InstitutionalSlicers: total * 10 / 100,
-			LatencyArbs:          total * 10 / 100,
+			LatencyArbs:          0,
 			FIXNoise:             total * 5 / 100,
 		}
 	}

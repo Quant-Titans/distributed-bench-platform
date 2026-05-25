@@ -164,13 +164,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Scores consumer — replays from earliest offset so hub rebuilds full state on restart.
+	// Scores consumer — starts from latest offset so stale sessions never pollute state on restart.
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     []string{broker},
 		Topic:       scoreTopic,
 		MinBytes:    1,
 		MaxBytes:    1e6,
-		StartOffset: kafka.FirstOffset,
+		StartOffset: kafka.LastOffset,
 	})
 
 	go func() {

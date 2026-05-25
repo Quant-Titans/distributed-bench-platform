@@ -1,0 +1,454 @@
+% ============================================================
+%  Quant Titans — IICPC Summer Hackathon 2026
+%  Official Submission Document
+%  Compile: pdflatex submission.tex  (twice for TOC)
+% ============================================================
+\documentclass[12pt,a4paper]{article}
+
+% ── Packages ────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{tcolorbox}
+\usepackage{fontawesome5}
+
+% ── Colour palette ──────────────────────────────────────────
+\definecolor{primary}{HTML}{1A1A2E}
+\definecolor{accent}{HTML}{E94560}
+\definecolor{muted}{HTML}{6C757D}
+\definecolor{codebg}{HTML}{F4F4F4}
+\definecolor{linkcolor}{HTML}{0A66C2}
+\definecolor{checkgreen}{HTML}{28A745}
+
+% ── Hyperref setup ──────────────────────────────────────────
+\hypersetup{
+  colorlinks  = true,
+  linkcolor   = accent,
+  urlcolor    = linkcolor,
+  citecolor   = accent,
+  pdftitle    = {Quant Titans — IICPC 2026 Submission},
+  pdfauthor   = {Emmanuel Adutwum, Shiv Kumar Mishra, Pathan Farhana},
+  pdfsubject  = {Distributed Benchmarking and Hosting Platform},
+}
+
+% ── Section styling ─────────────────────────────────────────
+\titleformat{\section}
+  {\large\bfseries\color{primary}}
+  {\thesection.}{0.8em}{}[\color{accent}\titlerule]
+
+\titleformat{\subsection}
+  {\normalsize\bfseries\color{primary}}
+  {\thesubsection.}{0.6em}{}
+
+% ── Header / Footer ─────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancyhead[L]{\small\color{muted}Quant Titans — IICPC Summer Hackathon 2026}
+\fancyhead[R]{\small\color{muted}Distributed Benchmarking Platform}
+\fancyfoot[C]{\small\thepage}
+
+% ── Code listing style ──────────────────────────────────────
+\lstdefinestyle{shell}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{muted},
+  xleftmargin=1em,
+  xrightmargin=1em,
+  aboveskip=0.5em,
+  belowskip=0.5em,
+}
+\lstset{style=shell}
+
+% ── Highlight box ───────────────────────────────────────────
+\tcbuselibrary{skins,breakable}
+\newtcolorbox{infobox}[1][]{
+  colback=codebg, colframe=accent, coltitle=white,
+  fonttitle=\bfseries, title=#1,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+  breakable
+}
+
+% ── Column types for tables ─────────────────────────────────
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+% ============================================================
+\begin{document}
+
+% ── Title page ──────────────────────────────────────────────
+\begin{titlepage}
+  \centering
+  \vspace*{2cm}
+
+  {\Huge\bfseries\color{primary} Distributed Benchmarking\\[0.3em]
+   \& Hosting Platform\par}
+
+  \vspace{1cm}
+  {\large\color{accent}\rule{0.6\linewidth}{2pt}\par}
+  \vspace{0.8cm}
+
+  {\Large\bfseries\color{primary} Official Submission Document\par}
+  \vspace{0.4cm}
+  {\large IICPC Summer Hackathon 2026\par}
+
+  \vspace{1.5cm}
+
+  \begin{tcolorbox}[colback=primary!5, colframe=primary, width=0.7\linewidth,
+                    left=12pt, right=12pt, top=10pt, bottom=10pt]
+    \centering
+    {\LARGE\bfseries\color{primary} QUANT TITANS\par}
+    \vspace{0.5em}
+    \begin{tabular}{ll}
+      Emmanuel Adutwum    & Infrastructure Architect \\
+      Shiv Kumar Mishra   & Distributed Systems Lead \\
+      Pathan Farhana      & Frontend \& Scoring Lead \\
+    \end{tabular}
+  \end{tcolorbox}
+
+  \vspace{1.5cm}
+
+  \begin{tabular}{ll}
+    \textbf{GitHub Org:}   & \href{https://github.com/Quant-Titans}{github.com/Quant-Titans} \\[4pt]
+    \textbf{Repository:}   & \href{https://github.com/Quant-Titans/distributed-bench-platform}{%
+                              distributed-bench-platform} \\[4pt]
+    \textbf{Submission date:} & 22 May 2026 \\[4pt]
+    \textbf{Contact:}      & \href{mailto:emmanuelsoneuclid10@gmail.com}{emmanuelsoneuclid10@gmail.com} \\
+  \end{tabular}
+
+  \vfill
+  {\small\color{muted} IICPC Summer Hackathon 2026 $\cdot$ May 9 -- June 10, 2026\par}
+\end{titlepage}
+
+% ── Table of Contents ───────────────────────────────────────
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Executive Summary}
+
+We built a fully operational \textbf{Distributed Benchmarking and Hosting Platform} that automates the entire lifecycle of evaluating contestant-submitted trading infrastructure: from code upload and containerised sandbox deployment, through a 1{,}000-bot concurrent load test, to real-time composite scoring on a live leaderboard.
+
+The platform demonstrates:
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Sandboxing depth} — Docker + Kubernetes with seccomp profiles, CPU pinning, and network isolation
+  \item \textbf{FIX 4.4 protocol support} — signals deep domain knowledge of financial exchange infrastructure
+  \item \textbf{Real tail-latency measurement} — HDR histograms reporting p50/p90/p99, never just averages
+  \item \textbf{Price-time priority correctness validation} — fill accuracy and order-book integrity checks
+  \item \textbf{One-command reproducible deploy} — \texttt{make up} spins the entire platform in~$\approx$12 minutes
+  \item \textbf{Live Grafana observability} — auto-provisioned dashboards for latency, TPS, score, and correctness
+\end{itemize}
+
+% ============================================================
+\section{Required Deliverables}
+
+The competition specification requires three core deliverables. All three are complete and committed to the repository.
+
+\subsection{1 — Working Infrastructure Prototype}
+
+The full pipeline is operational end-to-end:
+
+\begin{center}
+\begin{tabular}{C{3.2cm} C{0.6cm} C{3.2cm} C{0.6cm} C{3.2cm}}
+  \toprule
+  \textbf{Upload \& Sandbox} & $\rightarrow$ & \textbf{Bot Fleet} & $\rightarrow$ & \textbf{Telemetry} \\
+  \midrule
+  Docker + K8s isolation & & 1{,}000 bots, 3 teams & & Kafka consumer \\
+  seccomp profile & & FIX 4.4 + REST + WS & & TimescaleDB store \\
+  CPU pinning & & HDR histograms & & p50/p90/p99 scoring \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.5em}
+
+\begin{center}
+\begin{tabular}{C{0.6cm} C{5cm} C{0.6cm} C{5cm}}
+  & $\downarrow$ & & $\downarrow$ \\
+  & \textbf{Leaderboard (React)} & & \textbf{Grafana (Observability)} \\
+  & WebSocket real-time updates & & TimescaleDB datasource \\
+  & 3-team live scoring & & p99/TPS/correctness panels \\
+\end{tabular}
+\end{center}
+
+\vspace{1em}
+
+\begin{infobox}[Live Demo]
+  \textbf{Demo Recording:} \href{https://drive.google.com/file/d/1E9xaJxHHFGDKy_20ZCiWIMj6p_5RHUQ6/view?usp=sharing}{%
+  \texttt{Quant Titans Live Demo Recording}} \\[4pt]
+  \textbf{Live Platform URLs:}\\
+  \hspace{1em}Leaderboard — \href{https://gilled-snuggle-quarters.ngrok-free.dev}{\texttt{gilled-snuggle-quarters.ngrok-free.dev}}\\
+  \hspace{1em}Grafana — \href{https://please-urls-little-hardware.trycloudflare.com}{\texttt{please-urls-little-hardware.trycloudflare.com}}
+\end{infobox}
+
+\subsection{2 — Architecture Blueprint}
+
+A 1{,}243-line architecture document lives at \texttt{docs/architecture.md} in the repository. It covers:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item Microservices design and inter-service protocols (gRPC, Kafka/Redpanda)
+  \item Data stores: TimescaleDB hypertables, Redis hot-path cache
+  \item Isolation strategies: seccomp, namespaces, CPU pinning
+  \item Scoring algorithm: composite of latency, throughput, and correctness
+  \item Seven Architecture Decision Records (\texttt{docs/adr/ADR-001} through \texttt{ADR-007})
+\end{itemize}
+
+\subsection{3 — Infrastructure as Code (IaC)}
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Terraform} (\texttt{infra/terraform/}) — AWS EKS cluster, VPC, node groups, eu-north-1
+  \item \textbf{Helm charts} (\texttt{infra/helm/platform/}) — all four services declared as Kubernetes manifests
+  \item \textbf{kind local cluster} (\texttt{infra/kind/cluster-up.sh}) — one-command local dev deploy
+\end{itemize}
+
+One-command deploy:
+\begin{lstlisting}
+git clone https://github.com/Quant-Titans/distributed-bench-platform
+cd distributed-bench-platform
+make up         # spins up kind cluster, deploys all services (~12 min)
+make bench      # fires 1000 bots across 3 teams
+\end{lstlisting}
+
+% ============================================================
+\section{System Architecture}
+
+\subsection{Microservices Overview}
+
+Four decoupled microservices communicate via gRPC and Redpanda (Kafka-compatible):
+
+\vspace{0.5em}
+\begin{center}
+\begin{tabular}{L{3.5cm} L{3.5cm} L{3.5cm} L{3cm}}
+  \toprule
+  \textbf{Service} & \textbf{Owner} & \textbf{Technology} & \textbf{Path} \\
+  \midrule
+  Submission \& Sandbox & Emmanuel Adutwum & Docker, K8s, seccomp & \texttt{sandbox/} \\
+  Distributed Bot Fleet & Shiv Kumar Mishra & Go goroutines, FIX 4.4, gRPC & \texttt{botfleet/} \\
+  Telemetry \& Validation & Shiv Kumar Mishra & Go, TimescaleDB, HDR histograms & \texttt{telemetry/} \\
+  Real-Time Leaderboard & Pathan Farhana & React, native WebSocket & \texttt{leaderboard/} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Message Bus}
+
+Redpanda (Kafka-compatible, single-binary, lower latency) carries all inter-service metrics:
+
+\begin{center}
+\begin{tabular}{L{4.5cm} L{3.5cm} L{5cm}}
+  \toprule
+  \textbf{Topic} & \textbf{Retention} & \textbf{Purpose} \\
+  \midrule
+  \texttt{bench.raw\_metrics}    & 1 hour / 64 MB & Bot latency \& TPS samples \\
+  \texttt{bench.events}          & 1 hour / 64 MB & Order lifecycle events \\
+  \texttt{bench.scores}          & 1 hour / 64 MB & Computed composite scores \\
+  \texttt{telemetry.kernel\_latency} & 1 hour / 64 MB & eBPF kernel-level measurements \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{Technology Stack}
+
+\begin{longtable}{L{3.5cm} L{3.8cm} L{6cm}}
+  \toprule
+  \textbf{Layer} & \textbf{Choice} & \textbf{Rationale} \\
+  \midrule
+  \endhead
+  Sandbox / Isolation   & Docker + Kubernetes   & seccomp, namespaces, CPU pinning \\
+  Bot Fleet             & Go (goroutines)       & Concurrency at scale; no GC pauses on latency paths \\
+  Inter-service comms   & gRPC + Protobuf       & Streaming, strongly typed, low overhead \\
+  Messaging bus         & Redpanda              & Kafka-compatible, lower latency, single binary \\
+  Metrics database      & TimescaleDB           & Time-series hypertables, full SQL \\
+  Hot-path cache        & Redis                 & Leaderboard state, active session tracking \\
+  IaC                   & Terraform + Helm      & Reproducible one-command deploys \\
+  Order protocols       & FIX 4.4 + REST + WS   & FIX signals deep domain knowledge \\
+  Observability         & Grafana 10.4          & Auto-provisioned dashboards, p99/TPS panels \\
+  Frontend              & React + WebSocket     & Real-time streaming, no polling \\
+  Cloud                 & AWS EKS (eu-north-1)  & Terraform-managed, horizontal scaling \\
+  Local dev             & kind (K8s in Docker)  & Full cluster fidelity, single machine \\
+  \bottomrule
+\end{longtable}
+
+% ============================================================
+\section{Key Engineering Decisions}
+
+\subsection{HDR Histograms for Latency}
+We use HdrHistogram (High Dynamic Range) rather than simple averages. Every latency report publishes p50, p90, and p99 percentiles. This exposes tail latency that averages hide, which is critical for evaluating a matching engine under load.
+
+\subsection{FIX 4.4 Protocol}
+The bot fleet sends orders using FIX 4.4 (via QuickFIX/Go) alongside REST and WebSocket. FIX is the industry-standard wire protocol for financial exchange communication. Supporting it demonstrates genuine domain understanding beyond a basic REST mock.
+
+\subsection{Price-Time Priority Validation}
+The telemetry service includes a correctness validator that verifies every fill against price-time priority rules. Fill accuracy and order-book integrity are first-class scoring dimensions shown on the leaderboard, not just latency and throughput.
+
+\subsection{Telemetry Startup Resilience}
+\texttt{telemetry/cmd/main.go:connectStore()} retries the TimescaleDB connection with exponential backoff (2s → 4s → 8s → 16s cap) for up to 90 seconds. This eliminates the pod startup race condition where DNS resolution for the TimescaleDB StatefulSet was not yet available, removing the need for manual \texttt{kubectl rollout restart}.
+
+\subsection{One-Command Deploy}
+\begin{lstlisting}
+make up    # kind cluster + Helm deploy + Kafka topics (~12 min)
+make bench # spawn 1000 bots across 3 teams
+\end{lstlisting}
+Tested from a clean state. No manual steps required.
+
+% ============================================================
+\section{Bot Fleet Configuration}
+
+The platform spawns \textbf{1,000 concurrent trading bots} distributed across three simulated contestants:
+
+\begin{center}
+\begin{tabular}{L{4cm} C{2.5cm} C{2.5cm} C{4cm}}
+  \toprule
+  \textbf{Team} & \textbf{Bots} & \textbf{Session ID} & \textbf{Order Mix} \\
+  \midrule
+  Quant Titans  & 334 & \texttt{demo-qt} & Limit / Market / Cancel \\
+  Alpha Strike  & 333 & \texttt{demo-as} & Limit / Market / Cancel \\
+  Iron Quant    & 333 & \texttt{demo-iq} & Limit / Market / Cancel \\
+  \midrule
+  \textbf{Total} & \textbf{1,000} & — & 20 TPS aggregate \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+Each bot sends orders via FIX 4.4, REST, and WebSocket. Metrics are published to Redpanda every second and consumed by the telemetry engine.
+
+% ============================================================
+\section{Scoring Model}
+
+The composite score visible on the leaderboard combines four dimensions:
+
+\begin{center}
+\begin{tabular}{L{4cm} C{2cm} L{7cm}}
+  \toprule
+  \textbf{Dimension} & \textbf{Weight} & \textbf{Metric} \\
+  \midrule
+  Latency (p99)     & 35\%  & Lower is better; HDR histogram p99 \\
+  Throughput (TPS)  & 25\%  & Orders processed per second \\
+  Correctness       & 30\%  & Fill accuracy + price-time priority \\
+  Availability      & 10\%  & Uptime during load test window \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+Scores are published to \texttt{bench.scores} Kafka topic and streamed to the React leaderboard via WebSocket within $<$1 second of computation.
+
+% ============================================================
+\section{Repository Structure}
+
+\begin{lstlisting}
+distributed-bench-platform/
+├── sandbox/           # Docker/K8s sandboxing engine, seccomp profile
+├── botfleet/          # Go bot fleet — FIX 4.4, WebSocket, HDR histograms
+├── telemetry/         # Kafka consumer, TimescaleDB store, correctness validator
+├── leaderboard/       # React frontend + WebSocket streaming
+├── dummy-engine/      # Reference matching engine (C++ stub via REST + FIX)
+├── infra/
+│   ├── terraform/     # AWS EKS cluster IaC (eu-north-1)
+│   ├── helm/          # Helm chart: all 4 services + Grafana + Redpanda
+│   └── kind/          # Local cluster setup (cluster-up.sh + local-values.yaml)
+├── proto/             # Shared gRPC Protobuf definitions
+├── docs/
+│   ├── architecture.md        # 1,243-line architecture blueprint
+│   ├── adr/                   # ADR-001 through ADR-007
+│   └── demo-script.md
+├── docker-compose.yml
+├── Makefile
+└── README.md
+\end{lstlisting}
+
+% ============================================================
+\section{Submission Checklist}
+
+\begin{center}
+\begin{tabular}{L{7cm} C{2cm} L{4cm}}
+  \toprule
+  \textbf{Item} & \textbf{Status} & \textbf{Location} \\
+  \midrule
+  Working pipeline (upload → sandbox → bots → scoring) & \textcolor{checkgreen}{\textbf{Done}} & Full repo \\
+  1{,}000-bot concurrent load test                      & \textcolor{checkgreen}{\textbf{Done}} & \texttt{botfleet/} \\
+  FIX 4.4 protocol support                              & \textcolor{checkgreen}{\textbf{Done}} & \texttt{botfleet/internal/fix/} \\
+  HDR histogram latency (p50/p90/p99)                   & \textcolor{checkgreen}{\textbf{Done}} & \texttt{telemetry/} \\
+  Price-time priority correctness validator              & \textcolor{checkgreen}{\textbf{Done}} & \texttt{telemetry/validator.go} \\
+  Real-time leaderboard (React + WebSocket)             & \textcolor{checkgreen}{\textbf{Done}} & \texttt{leaderboard/} \\
+  Grafana observability dashboard                       & \textcolor{checkgreen}{\textbf{Done}} & \texttt{infra/helm/platform/} \\
+  Architecture blueprint (1{,}243 lines)                & \textcolor{checkgreen}{\textbf{Done}} & \texttt{docs/architecture.md} \\
+  Seven ADRs                                            & \textcolor{checkgreen}{\textbf{Done}} & \texttt{docs/adr/} \\
+  Terraform IaC (AWS EKS, eu-north-1)                   & \textcolor{checkgreen}{\textbf{Done}} & \texttt{infra/terraform/} \\
+  Helm charts (all services)                            & \textcolor{checkgreen}{\textbf{Done}} & \texttt{infra/helm/} \\
+  One-command deploy (\texttt{make up})                 & \textcolor{checkgreen}{\textbf{Done}} & \texttt{Makefile} \\
+  Submission tarball (\texttt{make submission})         & \textcolor{checkgreen}{\textbf{Done}} & \texttt{dist/} \\
+  Demo video                                            & \textcolor{checkgreen}{\textbf{Done}} & See Section~\ref{sec:demo} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{Links}
+\label{sec:demo}
+
+\begin{center}
+\begin{tabular}{L{4.5cm} L{9cm}}
+  \toprule
+  \textbf{Resource} & \textbf{URL} \\
+  \midrule
+  GitHub Repository    & \url{https://github.com/Quant-Titans/distributed-bench-platform} \\
+  Architecture Doc     & \href{https://github.com/Quant-Titans/distributed-bench-platform/blob/main/docs/architecture.md}{\texttt{docs/architecture.md}} \\
+  Live Demo Recording  & \href{https://drive.google.com/file/d/1E9xaJxHHFGDKy_20ZCiWIMj6p_5RHUQ6/view?usp=sharing}{\textbf{Quant Titans Live Demo Recording}} \\
+  Live Leaderboard     & \href{https://gilled-snuggle-quarters.ngrok-free.dev}{\texttt{gilled-snuggle-quarters.ngrok-free.dev}} \\
+  Live Grafana         & \href{https://please-urls-little-hardware.trycloudflare.com}{\texttt{please-urls-little-hardware.trycloudflare.com}} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.5em}
+\begin{infobox}[Demo Video Note]
+The demo recording shows the full pipeline live: \texttt{make bench} firing 1{,}000 bots,
+the leaderboard at \texttt{localhost:8082} updating in real-time, and Grafana at
+\texttt{localhost:3000} displaying p99 latency, TPS, correctness, and standings.
+\end{infobox}
+
+% ============================================================
+\section{Team}
+
+\begin{center}
+\begin{tabular}{L{4cm} L{4cm} L{6cm}}
+  \toprule
+  \textbf{Name} & \textbf{GitHub} & \textbf{Responsibilities} \\
+  \midrule
+  Emmanuel Adutwum  & emmanueladutwum123 & Infrastructure Architect — sandbox, IaC, Terraform, Helm, telemetry pipeline, architecture doc \\[6pt]
+  Shiv Kumar Mishra & —                 & Distributed Systems Lead — bot fleet, gRPC, Kafka, HDR latency, correctness validation \\[6pt]
+  Pathan Farhana    & —                 & Frontend \& Scoring Lead — React leaderboard, WebSocket streaming, composite score algorithm \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{1em}
+\begin{center}
+  {\color{muted}\small Contact: \href{mailto:emmanuelsoneuclid10@gmail.com}{emmanuelsoneuclid10@gmail.com}
+  $\cdot$ (929) 377-7654}
+\end{center}
+
+\vfill
+\begin{center}
+  \color{muted}\small
+  \textit{Submitted for the IICPC Summer Hackathon 2026 $\cdot$ Team Quant Titans $\cdot$ May 2026}\\[4pt]
+  \href{https://github.com/Quant-Titans/distributed-bench-platform}{\faGithub\ github.com/Quant-Titans/distributed-bench-platform}
+\end{center}
+
+\end{document}

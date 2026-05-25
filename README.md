@@ -313,9 +313,9 @@ Each image also gets a short SHA tag (e.g., `:a1b2c3d`) for pinned deploys.
 
 | Member | GitHub | Role |
 |---|---|---|
-| Emmanuel Adutwum | `emmanueladutwum123` | Infrastructure Architect — sandbox, eBPF, IaC, chaos, telemetry pipeline |
-| Shiv Kumar Mishra | — | Distributed Systems Lead |
-| Pathan Farhana | — | Frontend & Scoring Lead |
+| **Emmanuel Adutwum** ⭐ | `emmanueladutwum123` | **Senior Lead — Distributed Systems & Platform Architecture** · End-to-end system design and delivery: sandbox isolation engine (seccomp/namespaces), Kubernetes IaC (Helm + Terraform), eBPF kernel-level latency prober, Redpanda/Kafka telemetry pipeline, TimescaleDB ingestion, composite scoring engine, botfleet gRPC server, chaos injection framework, Cloudflare permanent tunnels, CI/CD (GitHub Actions), demo orchestration |
+| Shiv Kumar Mishra | — | Distributed Systems Contributor — bot worker pool, order generation protocols |
+| Pathan Farhana | — | Frontend & Scoring Contributor — React leaderboard UI, WebSocket streaming |
 
 ---
 

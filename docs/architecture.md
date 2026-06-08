@@ -1,7 +1,9 @@
 # Architecture — Quant Titans Distributed Benchmarking Platform
 
 **Team:** Quant Titans | **Competition:** IICPC Summer Hackathon 2026  
-**Lead Developer:** Emmanuel Adutwum — Senior Lead Developer & Principal Architect (architecture, distributed systems, infrastructure, all engineering domains)  
+**Lead Developer:** Emmanuel Adutwum (`emmanueladutwum123`) — Senior Lead Developer & Principal Architect (architecture, distributed systems, infrastructure, all engineering domains)  
+**Distributed Systems Engineer:** Shiv Kumar Mishra (`Shivfun99`) — Bot worker pool, order generation protocols, gRPC service integration, concurrent load generation  
+**Frontend & Scoring Engineer:** Pathan Farhana (`Pathan-Farhana`) — React leaderboard UI, real-time WebSocket streaming, composite score visualisation  
 **Last updated:** 2026-06-08 (final submission)
 
 ---
@@ -1251,7 +1253,7 @@ The `botfleet` service uses `expose:` instead of host-port binding in `docker-co
 | Member | GitHub | Role |
 |---|---|---|
 | **Emmanuel Adutwum** ⭐ | `emmanueladutwum123` | **Senior Lead Developer & Principal Architect** — End-to-end system architecture and delivery: eBPF TC-hook kernel latency prober, Docker sandbox isolation engine (seccomp, CapDrop ALL, CPU pinning, read-only rootfs), Kubernetes IaC (Helm + Terraform), Redpanda/Kafka telemetry pipeline, TimescaleDB ingestion, 4-dimension composite scoring engine, botfleet gRPC server (5 archetypes, 1000+ bots, FIX 4.4), chaos injection framework (tc-netem + cgroup v2), React leaderboard + WebSocket server, GitHub Actions CI/CD, one-command kind cluster deploy, demo orchestration |
-| **Shiv Kumar Mishra** | — | **Distributed Systems Engineer** — Bot worker pool architecture, order generation protocols (REST/WebSocket/FIX), gRPC service integration, concurrent load generation and fleet coordination |
-| **Pathan Farhana** | — | **Frontend & Scoring Engineer** — React leaderboard UI, real-time WebSocket streaming, composite score visualisation, archetype breakdown display, chaos event markers |
+| **Shiv Kumar Mishra** | `Shivfun99` | **Distributed Systems Engineer** — Bot worker pool architecture, order generation protocols (REST/WebSocket/FIX), gRPC service integration, concurrent load generation and fleet coordination |
+| **Pathan Farhana** | `Pathan-Farhana` | **Frontend & Scoring Engineer** — React leaderboard UI, real-time WebSocket streaming, composite score visualisation, archetype breakdown display, chaos event markers |
 
 *Architecture designed, implemented, and maintained by Emmanuel Adutwum (Senior Lead Developer). This document reflects the final submission state (2026-06-08). All described components are implemented, CI-tested, and submitted for IICPC 2026.*

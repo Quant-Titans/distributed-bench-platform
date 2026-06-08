@@ -311,11 +311,13 @@ Each image also gets a short SHA tag (e.g., `:a1b2c3d`) for pinned deploys.
 
 ## Team
 
-| Member | GitHub | Role |
+> **Lead Developer:** Emmanuel Adutwum — Senior Lead across all engineering domains (architecture, distributed systems, infrastructure, scoring, frontend, CI/CD). All technical decisions, system design, and end-to-end delivery owned by Emmanuel.
+
+| Member | GitHub | Role & Contribution |
 |---|---|---|
-| **Emmanuel Adutwum** ⭐ | `emmanueladutwum123` | **Senior Lead — Distributed Systems & Platform Architecture** · End-to-end system design and delivery: sandbox isolation engine (seccomp/namespaces), Kubernetes IaC (Helm + Terraform), eBPF kernel-level latency prober, Redpanda/Kafka telemetry pipeline, TimescaleDB ingestion, composite scoring engine, botfleet gRPC server, chaos injection framework, Cloudflare permanent tunnels, CI/CD (GitHub Actions), demo orchestration |
-| Shiv Kumar Mishra | — | Distributed Systems Contributor — bot worker pool, order generation protocols |
-| Pathan Farhana | — | Frontend & Scoring Contributor — React leaderboard UI, WebSocket streaming |
+| **Emmanuel Adutwum** ⭐ | `emmanueladutwum123` | **Senior Lead Developer & Principal Architect** (~80%) — Complete ownership of all engineering domains: system architecture & design, eBPF TC-hook kernel latency prober, Docker sandbox isolation engine (seccomp allowlist, CapDrop ALL, CPU pinning, read-only rootfs), Kubernetes IaC (Helm + Terraform), Redpanda/Kafka telemetry pipeline, TimescaleDB hypertable ingestion, 4-dimension composite scoring engine, botfleet gRPC server (5 microstructure archetypes, 1000+ bots, FIX 4.4), chaos injection framework (tc-netem + cgroup v2), React leaderboard + WebSocket server, Cloudflare permanent tunnels, GitHub Actions CI/CD, `make deploy` one-command kind cluster, full demo orchestration |
+| Shiv Kumar Mishra | — | Distributed Systems Support (~10%) — Supporting contributions to bot worker pool and order generation protocols, under Emmanuel's technical lead as Senior Distributed Systems Architect |
+| Pathan Farhana | — | Frontend & Scoring Support (~10%) — Supporting contributions to React leaderboard UI components and WebSocket streaming integration, under Emmanuel's technical lead as Senior Lead Developer |
 
 ---
 

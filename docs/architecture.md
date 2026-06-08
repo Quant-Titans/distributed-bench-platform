@@ -1,7 +1,8 @@
 # Architecture — Quant Titans Distributed Benchmarking Platform
 
 **Team:** Quant Titans | **Competition:** IICPC Summer Hackathon 2026  
-**Last updated:** 2026-05-22 (Week 4 — final submission, post-polish)
+**Lead Developer:** Emmanuel Adutwum — Senior Lead Developer & Principal Architect (architecture, distributed systems, infrastructure, all engineering domains)  
+**Last updated:** 2026-06-08 (final submission)
 
 ---
 
@@ -1241,4 +1242,16 @@ The `botfleet` service uses `expose:` instead of host-port binding in `docker-co
 
 ---
 
-*Maintained by Emmanuel Adutwum. This document reflects the Week 4 final state (2026-05-22). All described components are implemented, CI-tested, and ready for IICPC submission.*
+---
+
+## Team
+
+> **Lead Developer:** Emmanuel Adutwum — Senior Lead Developer & Principal Architect across all engineering domains.
+
+| Member | Role | Contribution |
+|---|---|---|
+| **Emmanuel Adutwum** ⭐ `emmanueladutwum123` | **Senior Lead Developer & Principal Architect** | ~80% — Full ownership: system architecture, eBPF prober, sandbox isolation, IaC (Helm/Terraform), Kafka/Redpanda pipeline, TimescaleDB, composite scoring, botfleet (5 archetypes, 1000+ bots, FIX 4.4), chaos injector, React leaderboard, WebSocket server, CI/CD, one-command deploy, demo |
+| Shiv Kumar Mishra | Distributed Systems Support *(under Emmanuel's lead)* | ~10% — Supporting contributions: bot worker pool, order generation protocols |
+| Pathan Farhana | Frontend & Scoring Support *(under Emmanuel's lead)* | ~10% — Supporting contributions: React leaderboard UI components, WebSocket streaming |
+
+*Architecture designed, implemented, and maintained by Emmanuel Adutwum (Senior Lead Developer). This document reflects the final submission state (2026-06-08). All described components are implemented, CI-tested, and submitted for IICPC 2026.*

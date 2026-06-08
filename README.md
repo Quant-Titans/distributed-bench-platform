@@ -311,13 +311,13 @@ Each image also gets a short SHA tag (e.g., `:a1b2c3d`) for pinned deploys.
 
 ## Team
 
-> **Lead Developer:** Emmanuel Adutwum — Senior Lead across all engineering domains (architecture, distributed systems, infrastructure, scoring, frontend, CI/CD). All technical decisions, system design, and end-to-end delivery owned by Emmanuel.
+> **Lead Developer:** Emmanuel Adutwum — Senior Lead Developer & Principal Architect across all engineering domains (architecture, distributed systems, infrastructure, scoring, frontend, CI/CD).
 
-| Member | GitHub | Role & Contribution |
+| Member | GitHub | Role |
 |---|---|---|
-| **Emmanuel Adutwum** ⭐ | `emmanueladutwum123` | **Senior Lead Developer & Principal Architect** (~80%) — Complete ownership of all engineering domains: system architecture & design, eBPF TC-hook kernel latency prober, Docker sandbox isolation engine (seccomp allowlist, CapDrop ALL, CPU pinning, read-only rootfs), Kubernetes IaC (Helm + Terraform), Redpanda/Kafka telemetry pipeline, TimescaleDB hypertable ingestion, 4-dimension composite scoring engine, botfleet gRPC server (5 microstructure archetypes, 1000+ bots, FIX 4.4), chaos injection framework (tc-netem + cgroup v2), React leaderboard + WebSocket server, Cloudflare permanent tunnels, GitHub Actions CI/CD, `make deploy` one-command kind cluster, full demo orchestration |
-| Shiv Kumar Mishra | — | Distributed Systems Support (~10%) — Supporting contributions to bot worker pool and order generation protocols, under Emmanuel's technical lead as Senior Distributed Systems Architect |
-| Pathan Farhana | — | Frontend & Scoring Support (~10%) — Supporting contributions to React leaderboard UI components and WebSocket streaming integration, under Emmanuel's technical lead as Senior Lead Developer |
+| **Emmanuel Adutwum** ⭐ | `emmanueladutwum123` | **Senior Lead Developer & Principal Architect** — End-to-end system architecture and delivery: eBPF TC-hook kernel latency prober, Docker sandbox isolation engine (seccomp allowlist, CapDrop ALL, CPU pinning, read-only rootfs), Kubernetes IaC (Helm + Terraform), Redpanda/Kafka telemetry pipeline, TimescaleDB hypertable ingestion, 4-dimension composite scoring engine, botfleet gRPC server (5 microstructure archetypes, 1000+ bots, FIX 4.4), chaos injection framework (tc-netem + cgroup v2), React leaderboard + WebSocket server, Cloudflare permanent tunnels, GitHub Actions CI/CD, one-command kind cluster deploy, full demo orchestration |
+| **Shiv Kumar Mishra** | — | **Distributed Systems Engineer** — Bot worker pool architecture, order generation protocols (REST/WebSocket/FIX), gRPC service integration, concurrent load generation and fleet coordination |
+| **Pathan Farhana** | — | **Frontend & Scoring Engineer** — React leaderboard UI, real-time WebSocket streaming, composite score visualisation, archetype breakdown display, chaos event markers |
 
 ---
 
